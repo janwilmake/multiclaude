@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[ $# -ge 1 ] || { echo 'usage: cca "prompt" [name]'; exit 1; }
+
+REPO="$PWD"
+L="$HOME/.claude/launchers"; mkdir -p "$L"
+A="$HOME/.claude/agents"; mkdir -p "$A"
+
+NAME="${2:-}"
+if [ -z "$NAME" ]; then
+  for n in $(seq 1 8); do
+    [ -e "$A/agent-$n/.cca-lock" ] || { NAME="agent-$n"; break; }
+  done
+  [ -n "$NAME" ] || { echo "all 8 slots busy"; exit 1; }
+fi
+WORK="$A/$NAME"
+
+printf '%s' "$1" > "$L/$NAME.prompt"
+
+cat > "$L/$NAME.command" <<EOF
+#!/bin/bash
+printf '\033]0;$NAME\007'
+echo "cloning -> $WORK"
+rm -rf "$WORK"
+time cp -Rc "$REPO" "$WORK" || { echo "clonefile failed, plain copy"; rm -rf "$WORK"; cp -R "$REPO" "$WORK"; }
+rm -rf "$WORK/.claude/worktrees" "$WORK/build" "$WORK/.react-router" "$WORK/coverage"
+rm -rf "$WORK/node_modules"
+ln -s "$REPO/node_modules" "$WORK/node_modules"
+touch "$WORK/.cca-lock"
+trap 'rm -f "$WORK/.cca-lock"' EXIT
+cd "$WORK"
+claude --chrome "\$(cat "$L/$NAME.prompt")"
+exec \$SHELL
+EOF
+
+chmod +x "$L/$NAME.command"
+echo "$NAME -> $WORK"
+open -a Terminal "$L/$NAME.command"
