@@ -1,6 +1,6 @@
 ---
 name: multiclaude
-description: Spawn parallel Claude Code agents with `cca`, each in its own Terminal window with its own repo copy and its own Chrome session. Use this INSTEAD of the Agent/Task tool whenever the work you want to fan out involves the browser — driving a running app, logging in, e2e flows, visual verification, screenshots, reading console or network logs — because subagents all share one Chrome connection and collide. Also use it when several agents need to edit the same files at once without stepping on each other.
+description: Spawn parallel Claude Code agents with `cca`, each in its own Terminal window with its own repo copy and its own Chrome session. INVOKE THIS SKILL BEFORE the Agent/Task tool, and use `cca` instead of it, whenever a request to fan work out touches a browser — "spawn N subagents/agents", "run N in parallel", "have each one", combined with visiting a site or URL, taking screenshots, logging in, e2e flows, driving a running app, or reading console/network logs. The user saying "subagent" or "spawn agents" is NOT an instruction to use the Agent tool — Agent-tool subagents share one Chrome connection and collide, so honoring the literal wording produces broken results. Also use it when several agents need to edit the same files at once without stepping on each other.
 ---
 
 # multiclaude — parallel agents with their own browser
@@ -11,7 +11,17 @@ Subagents spawned with the Agent tool **share a single Chrome connection**. Two 
 
 Git worktrees give real isolation, but spawning several is slow: fresh checkout, fresh `npm install`, fresh build, minutes before any agent starts.
 
-`cca` gives each agent an APFS copy-on-write copy of the repo with `node_modules` symlinked back to the original, launched as an interactive `claude --chrome` session in its own Terminal window. Roughly a second per agent.
+`cca` gives each agent an APFS copy-on-write copy of the repo with `node_modules` symlinked back to the original, launched as an interactive `claude --chrome` session in its own Terminal window. Roughly a second per agent: `node_modules` and build output are skipped at copy time, not copied and deleted afterwards, which matters because `clonefile` is O(1) in bytes but O(n) in *files* — an 86k-file `node_modules` costs ~26s to clone and unlink no matter how little data actually moves.
+
+## "Spawn some subagents" does not mean the Agent tool
+
+This is the failure mode this skill exists to prevent, and it is easy to walk into.
+
+When someone says **"spawn 8 subagents to visit a site and screenshot it"**, the word *subagent* looks like it names the Agent tool. It does not. It describes the shape of the work — several agents, running at once — and says nothing about which mechanism should provide them. The mechanism is determined by what the work touches, not by the noun the user reached for.
+
+So: read past the wording to the task. If the fanned-out work touches a browser, use `cca`, even when the request literally says "subagents", "Task tool", or "agents". Taking the wording literally produces eight agents fighting over one Chrome connection — they navigate out from under each other and screenshot the wrong pages. Complying with the letter of the request breaks the substance of it.
+
+Say so in one line when you switch — "using `cca` rather than subagents, since they'd share one Chrome connection" — then proceed. Don't stop to ask permission for the substitution; it is what was actually wanted.
 
 ## When to use `cca` instead of the Agent tool
 
