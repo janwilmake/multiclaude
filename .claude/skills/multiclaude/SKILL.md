@@ -56,28 +56,43 @@ Fire them off back-to-back in a single command — the slot is claimed before th
 
 Each agent's working copy lands in `~/.claude/agents/agent-N/`.
 
+**Run `cca` outside the Bash sandbox** (`dangerouslyDisableSandbox: true`). It writes to `~/.claude/agents/` and `~/.claude/launchers/`, which the default sandbox denies. This is a known, expected exception — go straight to the unsandboxed call rather than spending a round-trip discovering the permission error.
+
+### Spawn, don't prepare to spawn
+
+N agents means exactly N `cca` calls in one Bash invocation, each with its prompt written out in full. Nothing before them.
+
+Specifically, do **not**:
+
+- run `command -v cca` or any other precheck — if it isn't installed the first call says so,
+- `mkdir` a shared output or screenshot directory — the agents report back in their own windows, and any file they need to write they can create themselves,
+- define a shell function or loop to generate the prompts — eight literal `cca "..."` lines are shorter to write, easier for the user to read, and don't hide a quoting bug,
+- write the prompts to files first, or stage anything in a scratch directory.
+
+Every one of those adds a round-trip before the first window opens, which is the entire thing `cca` exists to avoid. Repetition across the eight prompt strings is fine — it costs nothing and it's obvious at a glance what each agent got.
+
 ## Writing the prompt
 
-Each spawned agent starts **cold** — it has none of this conversation's context. The prompt string is everything it knows. Include:
+Each spawned agent starts **cold** — it has none of this conversation's context. The prompt string is everything it knows.
 
-- The concrete goal and what "done" looks like.
-- Which files or areas to touch, if you already know.
-- The port to use for a dev server, if it needs one, and a distinct port per agent.
-- Any credentials or login flow it should use, and that it should ask the user for 2FA rather than guess.
-- Whether to commit its work on a branch, so you can collect it later.
+Write it as plain sentences, and only as long as the task actually needs — for something like "visit this URL and screenshot it", one or two sentences is the whole prompt. Add the rest only when it applies: the concrete goal and what "done" looks like, which files to touch, a distinct dev-server port per agent, a login flow (and that it should ask the user for 2FA rather than guess), whether to commit on a branch so you can collect the work later.
+
+Resist the urge to make the prompts uniform. They're strings in a shell command, not a template to be filled in.
 
 ### Tab lifecycle — the one that bites
 
-`tabs_context_mcp` with `createIfEmpty: true` **creates an empty tab as a side effect**. If the prompt also tells the agent to call `tabs_create_mcp`, the agent ends up with two tabs and closes only the one it navigated, orphaning a blank `chrome://newtab/` behind.
+A `cca` agent is always a **fresh MCP session with no tab group**, and `tabs_create_mcp` cannot create one — it only adds a tab to a group that already exists. So the first call has to be `tabs_context_mcp` with `createIfEmpty: true`; that's what brings the group into being, and it hands back a tab.
 
-This is easy to miss because it fails *intermittently*. Whether the stray tab appears depends on the order the agent happens to call the two tools in, so the same prompt run across eight agents leaves an arbitrary subset of blank tabs open — some finish clean and look like proof the prompt is correct. They aren't; they got lucky.
+**Do not write prompts that forbid `createIfEmpty: true`.** It reads like a safe precaution and it is not — it deadlocks the agent on its very first browser call, with `tabs_context_mcp` and `tabs_create_mcp` each pointing at the other, and the agent stops to ask the user how to proceed. Eight agents, eight identical dead ends.
 
-Pick exactly one way to get a tab, never both:
+The rule that actually matters is: **get the tab once, then navigate it.**
 
-- call `tabs_context_mcp` with `createIfEmpty: true` and **navigate the tab it hands back**, or
-- call `tabs_create_mcp` with the URL and **never pass `createIfEmpty: true`**.
+- First tab: `tabs_context_mcp` with `createIfEmpty: true`, then navigate the tab it returns. Don't also call `tabs_create_mcp` — that's the extra tab that gets orphaned.
+- Any further tabs, once the group exists: `tabs_create_mcp`.
 
 Then close by group, not by memory: **"close every tab in your group"**, not "close the tab you created". The second phrasing is singular and silently leaves anything else behind.
+
+In practice none of this needs to be in the prompt. "Open `<url>`, screenshot it, then close every tab in your group" is enough — the agent knows its own tools. Spell the plumbing out only when an agent has already got it wrong.
 
 Tabs are scoped per MCP session, so one agent can neither see nor close another's — the orphans survive until a human clears them, and nothing in the fan-out reports the leak. Verify with `osascript -e 'tell application "Google Chrome" to get URL of every tab of every window'` after a run.
 

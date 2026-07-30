@@ -19,7 +19,17 @@ age() { echo $(( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || date +%s) )); }
 # why spawning stays instant.
 held=""
 for _ in $(seq 1 200); do
-  mkdir "$MUTEX" 2>/dev/null && { held=1; break; }
+  if err="$(mkdir "$MUTEX" 2>&1)"; then held=1; break; fi
+  # Only contention is worth waiting out. Every other reason mkdir fails —
+  # a sandbox that denies writes under ~/.claude, a read-only home, a missing
+  # parent — is just as true ten seconds from now, and retrying turns an
+  # instant legible error into a silent stall that looks like cca hanging.
+  # Eight spawns swallowing "Operation not permitted" and spinning 10s each
+  # is how this was found.
+  case "$err" in
+    *"File exists"*) ;;
+    *) echo "cca: cannot claim a slot: $err" >&2; exit 1 ;;
+  esac
   # A cca that died mid-claim leaves the mutex behind. 30s is orders of
   # magnitude longer than the work it guards, so anything older is debris.
   [ "$(age "$MUTEX")" -gt 30 ] && rmdir "$MUTEX" 2>/dev/null || true
