@@ -79,22 +79,16 @@ Write it as plain sentences, and only as long as the task actually needs — for
 
 Resist the urge to make the prompts uniform. They're strings in a shell command, not a template to be filled in.
 
-### Tab lifecycle — the one that bites
+### Don't explain Chrome to the agent
 
-A `cca` agent is always a **fresh MCP session with no tab group**, and `tabs_create_mcp` cannot create one — it only adds a tab to a group that already exists. So the first call has to be `tabs_context_mcp` with `createIfEmpty: true`; that's what brings the group into being, and it hands back a tab.
+**Never name a browser tool in a prompt, and never tell an agent which one to call or avoid.** "Open `<url>`, screenshot it, then close every tab in your group" is the whole browser part of the prompt.
 
-**Do not write prompts that forbid `createIfEmpty: true`.** It reads like a safe precaution and it is not — it deadlocks the agent on its very first browser call, with `tabs_context_mcp` and `tabs_create_mcp` each pointing at the other, and the agent stops to ask the user how to proceed. Eight agents, eight identical dead ends.
+A spawned agent boots with the same system prompt you have, including its tab-context and session-startup guidance, and it loads the `claude-in-chrome` skill before touching those tools. It knows the sequence. Restating it here would mean maintaining a second copy of guidance that changes on someone else's schedule — and a stale copy doesn't just fail to help, it *overrides* what the agent correctly knew. That has already happened once: this section used to claim `tabs_create_mcp` could open the first tab. It can't — it only adds to an existing group — so prompts written from it deadlocked every agent on its first browser call, and each one stopped to ask the user what to do.
 
-The rule that actually matters is: **get the tab once, then navigate it.**
+Two things are worth saying, because they're specific to running eight sessions at once and aren't in the system prompt:
 
-- First tab: `tabs_context_mcp` with `createIfEmpty: true`, then navigate the tab it returns. Don't also call `tabs_create_mcp` — that's the extra tab that gets orphaned.
-- Any further tabs, once the group exists: `tabs_create_mcp`.
-
-Then close by group, not by memory: **"close every tab in your group"**, not "close the tab you created". The second phrasing is singular and silently leaves anything else behind.
-
-In practice none of this needs to be in the prompt. "Open `<url>`, screenshot it, then close every tab in your group" is enough — the agent knows its own tools. Spell the plumbing out only when an agent has already got it wrong.
-
-Tabs are scoped per MCP session, so one agent can neither see nor close another's — the orphans survive until a human clears them, and nothing in the fan-out reports the leak. Verify with `osascript -e 'tell application "Google Chrome" to get URL of every tab of every window'` after a run.
+- **Close by group, not by memory** — "close every tab in your group", not "close the tab you created". The singular phrasing silently leaves anything else behind.
+- **Tabs are scoped per MCP session**, so one agent can neither see nor close another's. Orphans survive until a human clears them, and nothing in the fan-out reports the leak. Check with `osascript -e 'tell application "Google Chrome" to get URL of every tab of every window'` after a run.
 
 ## After spawning — this is not the Agent tool
 
