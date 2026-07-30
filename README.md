@@ -73,6 +73,17 @@ git clone https://github.com/janwilmake/multiclaude.git
 ln -s "$PWD/multiclaude/cca" ~/bin/cca
 ```
 
+### Teach Claude Code to use it
+
+This repo ships a skill at [`.claude/skills/multiclaude/SKILL.md`](.claude/skills/multiclaude/SKILL.md) that tells Claude Code to reach for `cca` instead of its own subagents whenever the fanned-out work involves the browser. Install it globally:
+
+```bash
+mkdir -p ~/.claude/skills
+ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
+```
+
+Or drop it in a single project's `.claude/skills/` to scope it there. Restart Claude Code and it'll show up in the skill list.
+
 ## Requirements
 
 - **macOS.** It uses `open -a Terminal` to spawn windows, and `cp -Rc` (APFS clonefile) for the fast copy. On a non-APFS volume the script falls back to a plain `cp -R`, which works but is slow.
