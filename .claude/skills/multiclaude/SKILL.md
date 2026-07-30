@@ -52,6 +52,8 @@ cca "write and run e2e tests for checkout, use port :5174"
 cca "audit the API routes for missing auth checks"
 ```
 
+Fire them off back-to-back in a single command — the slot is claimed before the window opens, so parallel spawns each get their own directory and their own prompt.
+
 Each agent's working copy lands in `~/.claude/agents/agent-N/`.
 
 ## Writing the prompt
@@ -100,7 +102,7 @@ Or have each agent push a branch, and merge from there.
 - **`node_modules` is a symlink to the source repo.** An agent running `npm install` mutates the user's main checkout. Don't instruct an agent to install or upgrade dependencies unless that's the actual task.
 - **The copy is a plain directory, not a worktree.** Each agent has its own `.git`; merging back is manual.
 - **`.env` files are copied.** Agents inherit real local credentials — never point one at production data or a destructive flow without the user explicitly approving it.
-- **Eight fixed slots.** If all are busy, `cca` exits with `all 8 slots busy`. Wait for a window to close rather than looking for a way around it — spilling into a ninth directory would cost the user another folder-trust prompt, which is the whole reason the names are fixed. A `SIGKILL`'d window can leave a stale `~/.claude/agents/agent-N/.cca-lock` to delete by hand.
+- **Eight fixed slots.** If all are busy, `cca` exits with `all 8 slots busy`. Wait for a window to close rather than looking for a way around it — spilling into a ninth directory would cost the user another folder-trust prompt, which is the whole reason the names are fixed. Locks (`~/.claude/agents/agent-N.lock`) hold the window's pid and are reclaimed automatically once that process is gone, so a `SIGKILL`'d window doesn't strand a slot.
 
 ## If `cca` isn't installed
 

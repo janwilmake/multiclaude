@@ -17,7 +17,7 @@ One command per agent. Each agent gets:
 - **Its own full copy of the repo**, made with APFS copy-on-write (`cp -Rc`). Near-instant and near-zero disk, because unchanged files share blocks with the original.
 - **`node_modules` symlinked back to the original repo**, so there's no reinstall — the single most expensive part of a worktree. It's skipped during the copy rather than copied and deleted afterwards: `clonefile` is O(1) in bytes but O(n) in *files*, so cloning an 86k-file `node_modules` and unlinking it again burns ~26s per agent even though almost no data moves.
 - **Its own Terminal window running interactive `claude --chrome`**, so it gets its own browser session and you can watch, interrupt, and steer it like a normal Claude Code session.
-- **A fixed slot name** (`agent-1` … `agent-8`), set as the window title so you can tell the windows apart, with a lock file so a new `cca` invocation never lands on a slot that's already busy.
+- **A fixed slot name** (`agent-1` … `agent-8`), set as the window title so you can tell the windows apart, with a lock file so a new `cca` invocation never lands on a slot that's already busy. The slot is claimed before the window opens, so you can fire all eight spawns at once and each still gets its own directory.
 
 Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt and nothing else.
 
@@ -43,7 +43,9 @@ cca "audit the API routes for missing auth checks"
 
 Three Terminal windows, three isolated copies, three independent Chrome sessions.
 
-Copies live in `~/.claude/agents/agent-N/`. The generated launcher scripts live in `~/.claude/launchers/`.
+Fire them back-to-back or in parallel (`cca "..." &`) — claiming a slot takes a millisecond and happens before the window opens, so spawns never collide.
+
+Copies live in `~/.claude/agents/agent-N/`. The generated launcher scripts live in `~/.claude/launchers/`, and each slot's lock is `~/.claude/agents/agent-N.lock`.
 
 ## Install
 
@@ -96,7 +98,7 @@ Or drop it in a single project's `.claude/skills/` to scope it there. Restart Cl
 - The script skips build output when copying (`build/`, `.react-router/`, `coverage/`) — edit that `case` line for your project's artifacts.
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
 - Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory — a new path would cost another folder-trust prompt, so waiting is the intended behaviour. Close a window to free its slot.
-- The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window can still leave a stale `~/.claude/agents/agent-N/.cca-lock` — delete it by hand if a slot looks stuck.
+- The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
 
 ## License
 
