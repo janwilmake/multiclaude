@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[ $# -ge 1 ] || { echo 'usage: cca "prompt" [name]'; exit 1; }
+[ $# -ge 1 ] || { echo 'usage: cca "prompt"'; exit 1; }
 
 REPO="$PWD"
 L="$HOME/.claude/launchers"; mkdir -p "$L"
 A="$HOME/.claude/agents"; mkdir -p "$A"
 
-NAME="${2:-}"
-if [ -z "$NAME" ]; then
-  for n in $(seq 1 8); do
-    [ -e "$A/agent-$n/.cca-lock" ] || { NAME="agent-$n"; break; }
-  done
-  [ -n "$NAME" ] || { echo "all 8 slots busy"; exit 1; }
-fi
+# Fixed slots — a fresh path would re-trigger Claude's folder-trust prompt.
+NAME=""
+for n in $(seq 1 8); do
+  [ -e "$A/agent-$n/.cca-lock" ] || { NAME="agent-$n"; break; }
+done
+[ -n "$NAME" ] || { echo "all 8 slots busy"; exit 1; }
 WORK="$A/$NAME"
 
 printf '%s' "$1" > "$L/$NAME.prompt"

@@ -39,10 +39,10 @@ Keep using the normal Agent tool when the work is read-only or non-conflicting �
 From the repo root, one invocation per agent:
 
 ```bash
-cca "the full prompt for this agent" [optional-name]
+cca "the full prompt for this agent"
 ```
 
-Omit the name and it takes the next free slot (`agent-1` … `agent-8`). Pass a name to make the Terminal window title meaningful.
+It takes the next free slot (`agent-1` … `agent-8`) automatically. **There is no name argument — never try to pass one.** The slot names are fixed on purpose: Claude Code grants folder trust once per directory, so spawning into a fresh path would make the user re-answer "do you trust the files in this folder?" on every single spawn. Reusing the same eight directories forever means they approve each one once, ever.
 
 Fan out by calling it several times:
 
@@ -52,7 +52,7 @@ cca "write and run e2e tests for checkout, use port :5174"
 cca "audit the API routes for missing auth checks"
 ```
 
-Each agent's working copy lands in `~/.claude/agents/<name>/`.
+Each agent's working copy lands in `~/.claude/agents/agent-N/`.
 
 ## Writing the prompt
 
@@ -100,7 +100,7 @@ Or have each agent push a branch, and merge from there.
 - **`node_modules` is a symlink to the source repo.** An agent running `npm install` mutates the user's main checkout. Don't instruct an agent to install or upgrade dependencies unless that's the actual task.
 - **The copy is a plain directory, not a worktree.** Each agent has its own `.git`; merging back is manual.
 - **`.env` files are copied.** Agents inherit real local credentials — never point one at production data or a destructive flow without the user explicitly approving it.
-- **Eight auto-assigned slots.** If all are busy, `cca` exits with `all 8 slots busy`. Passing an explicit name skips the slot check — but the launcher begins with `rm -rf "$WORK"`, so never reuse the name of an agent whose window is still open; you would delete the copy it's working in. A `SIGKILL`'d window can leave a stale `~/.claude/agents/<name>/.cca-lock` to delete by hand.
+- **Eight fixed slots.** If all are busy, `cca` exits with `all 8 slots busy`. Wait for a window to close rather than looking for a way around it — spilling into a ninth directory would cost the user another folder-trust prompt, which is the whole reason the names are fixed. A `SIGKILL`'d window can leave a stale `~/.claude/agents/agent-N/.cca-lock` to delete by hand.
 
 ## If `cca` isn't installed
 
