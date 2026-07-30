@@ -22,9 +22,20 @@ cat > "$L/$NAME.command" <<EOF
 printf '\033]0;$NAME\007'
 echo "cloning -> $WORK"
 rm -rf "$WORK"
-time cp -Rc "$REPO" "$WORK" || { echo "clonefile failed, plain copy"; rm -rf "$WORK"; cp -R "$REPO" "$WORK"; }
-rm -rf "$WORK/.claude/worktrees" "$WORK/build" "$WORK/.react-router" "$WORK/coverage"
-rm -rf "$WORK/node_modules"
+mkdir -p "$WORK"
+# Clone top-level entries one at a time, skipping what we would only delete again.
+# cp -Rc has no --exclude, and clonefile is O(1) in bytes but O(n) in *files* —
+# cloning an 86k-file node_modules just to rm -rf it costs ~26s of pure waste.
+time (
+  shopt -s dotglob
+  for e in "$REPO"/*; do
+    case "\$(basename "\$e")" in
+      node_modules|build|.react-router|coverage) continue ;;
+    esac
+    cp -Rc "\$e" "$WORK/" || { echo "clonefile failed for \$(basename "\$e"), plain copy"; cp -R "\$e" "$WORK/"; }
+  done
+)
+rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 touch "$WORK/.cca-lock"
 trap 'rm -f "$WORK/.cca-lock"' EXIT HUP INT TERM

@@ -15,7 +15,7 @@ Running several Claude Code agents on one repo at the same time is awkward:
 One command per agent. Each agent gets:
 
 - **Its own full copy of the repo**, made with APFS copy-on-write (`cp -Rc`). Near-instant and near-zero disk, because unchanged files share blocks with the original.
-- **`node_modules` symlinked back to the original repo**, so there's no reinstall — the single most expensive part of a worktree.
+- **`node_modules` symlinked back to the original repo**, so there's no reinstall — the single most expensive part of a worktree. It's skipped during the copy rather than copied and deleted afterwards: `clonefile` is O(1) in bytes but O(n) in *files*, so cloning an 86k-file `node_modules` and unlinking it again burns ~26s per agent even though almost no data moves.
 - **Its own Terminal window running interactive `claude --chrome`**, so it gets its own browser session and you can watch, interrupt, and steer it like a normal Claude Code session.
 - **A slot name** (`agent-1` … `agent-8`), set as the window title so you can tell the windows apart, with a lock file so a new `cca` invocation never lands on a slot that's already busy.
 
@@ -93,14 +93,14 @@ Or drop it in a single project's `.claude/skills/` to scope it there. Restart Cl
 
 - The copy is a **plain directory copy, not a git worktree**. Each agent has the full `.git` from the moment of the copy, so committing and branching work fine — but the agents don't share a git dir, and you have to merge the work back yourself (`git -C ~/.claude/agents/agent-1 diff`, or push a branch from inside the copy).
 - `node_modules` is a **symlink to the original repo**. Agents share dependencies, so an agent running `npm install` mutates your main checkout's `node_modules`. That's the trade-off that makes spawning fast.
-- The script deletes build output from the copy (`build/`, `.react-router/`, `coverage/`) — edit that line for your project's artifacts.
+- The script skips build output when copying (`build/`, `.react-router/`, `coverage/`) — edit that `case` line for your project's artifacts.
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
 - Slots cap at 8, and only apply to auto-assigned names. Passing an explicit name skips the slot check entirely — handy when the numbered slots are busy, but note the launcher starts with `rm -rf "$WORK"`, so reusing the name of a live agent destroys its working copy.
 - The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window can still leave a stale `~/.claude/agents/<name>/.cca-lock` — delete it by hand if a slot looks stuck.
 
 ## The script
 
-The whole thing is ~35 lines of bash:
+The whole thing is ~50 lines of bash:
 
 ```bash
 #!/usr/bin/env bash
@@ -127,9 +127,20 @@ cat > "$L/$NAME.command" <<EOF
 printf '\033]0;$NAME\007'
 echo "cloning -> $WORK"
 rm -rf "$WORK"
-time cp -Rc "$REPO" "$WORK" || { echo "clonefile failed, plain copy"; rm -rf "$WORK"; cp -R "$REPO" "$WORK"; }
-rm -rf "$WORK/.claude/worktrees" "$WORK/build" "$WORK/.react-router" "$WORK/coverage"
-rm -rf "$WORK/node_modules"
+mkdir -p "$WORK"
+# Clone top-level entries one at a time, skipping what we would only delete again.
+# cp -Rc has no --exclude, and clonefile is O(1) in bytes but O(n) in *files* —
+# cloning an 86k-file node_modules just to rm -rf it costs ~26s of pure waste.
+time (
+  shopt -s dotglob
+  for e in "$REPO"/*; do
+    case "\$(basename "\$e")" in
+      node_modules|build|.react-router|coverage) continue ;;
+    esac
+    cp -Rc "\$e" "$WORK/" || { echo "clonefile failed for \$(basename "\$e"), plain copy"; cp -R "\$e" "$WORK/"; }
+  done
+)
+rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 touch "$WORK/.cca-lock"
 trap 'rm -f "$WORK/.cca-lock"' EXIT HUP INT TERM
