@@ -95,7 +95,8 @@ Or drop it in a single project's `.claude/skills/` to scope it there. Restart Cl
 - `node_modules` is a **symlink to the original repo**. Agents share dependencies, so an agent running `npm install` mutates your main checkout's `node_modules`. That's the trade-off that makes spawning fast.
 - The script deletes build output from the copy (`build/`, `.react-router/`, `coverage/`) — edit that line for your project's artifacts.
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
-- Slots cap at 8. The lock file is removed when the launcher's shell exits, so a hard-killed Terminal window can leave a stale `~/.claude/agents/<name>/.cca-lock` — delete it by hand if a slot looks stuck.
+- Slots cap at 8, and only apply to auto-assigned names. Passing an explicit name skips the slot check entirely — handy when the numbered slots are busy, but note the launcher starts with `rm -rf "$WORK"`, so reusing the name of a live agent destroys its working copy.
+- The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window can still leave a stale `~/.claude/agents/<name>/.cca-lock` — delete it by hand if a slot looks stuck.
 
 ## The script
 
@@ -131,10 +132,12 @@ rm -rf "$WORK/.claude/worktrees" "$WORK/build" "$WORK/.react-router" "$WORK/cove
 rm -rf "$WORK/node_modules"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 touch "$WORK/.cca-lock"
-trap 'rm -f "$WORK/.cca-lock"' EXIT
+trap 'rm -f "$WORK/.cca-lock"' EXIT HUP INT TERM
 cd "$WORK"
 claude --chrome "\$(cat "$L/$NAME.prompt")"
-exec \$SHELL
+# Deliberately not \`exec\`: exec replaces the process image and discards the
+# EXIT trap, so the lock would never be released and the slot would leak.
+"\$SHELL"
 EOF
 
 chmod +x "$L/$NAME.command"

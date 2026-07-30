@@ -27,10 +27,12 @@ rm -rf "$WORK/.claude/worktrees" "$WORK/build" "$WORK/.react-router" "$WORK/cove
 rm -rf "$WORK/node_modules"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 touch "$WORK/.cca-lock"
-trap 'rm -f "$WORK/.cca-lock"' EXIT
+trap 'rm -f "$WORK/.cca-lock"' EXIT HUP INT TERM
 cd "$WORK"
 claude --chrome "\$(cat "$L/$NAME.prompt")"
-exec \$SHELL
+# Deliberately not \`exec\`: exec replaces the process image and discards the
+# EXIT trap, so the lock would never be released and the slot would leak.
+"\$SHELL"
 EOF
 
 chmod +x "$L/$NAME.command"

@@ -75,7 +75,7 @@ Or have each agent push a branch, and merge from there.
 - **`node_modules` is a symlink to the source repo.** An agent running `npm install` mutates the user's main checkout. Don't instruct an agent to install or upgrade dependencies unless that's the actual task.
 - **The copy is a plain directory, not a worktree.** Each agent has its own `.git`; merging back is manual.
 - **`.env` files are copied.** Agents inherit real local credentials — never point one at production data or a destructive flow without the user explicitly approving it.
-- **Eight slots.** If all are busy, `cca` exits with `all 8 slots busy`; a hard-killed window can leave a stale `~/.claude/agents/<name>/.cca-lock` to delete by hand.
+- **Eight auto-assigned slots.** If all are busy, `cca` exits with `all 8 slots busy`. Passing an explicit name skips the slot check — but the launcher begins with `rm -rf "$WORK"`, so never reuse the name of an agent whose window is still open; you would delete the copy it's working in. A `SIGKILL`'d window can leave a stale `~/.claude/agents/<name>/.cca-lock` to delete by hand.
 
 ## If `cca` isn't installed
 
