@@ -64,6 +64,21 @@ Each spawned agent starts **cold** — it has none of this conversation's contex
 - Any credentials or login flow it should use, and that it should ask the user for 2FA rather than guess.
 - Whether to commit its work on a branch, so you can collect it later.
 
+### Tab lifecycle — the one that bites
+
+`tabs_context_mcp` with `createIfEmpty: true` **creates an empty tab as a side effect**. If the prompt also tells the agent to call `tabs_create_mcp`, the agent ends up with two tabs and closes only the one it navigated, orphaning a blank `chrome://newtab/` behind.
+
+This is easy to miss because it fails *intermittently*. Whether the stray tab appears depends on the order the agent happens to call the two tools in, so the same prompt run across eight agents leaves an arbitrary subset of blank tabs open — some finish clean and look like proof the prompt is correct. They aren't; they got lucky.
+
+Pick exactly one way to get a tab, never both:
+
+- call `tabs_context_mcp` with `createIfEmpty: true` and **navigate the tab it hands back**, or
+- call `tabs_create_mcp` with the URL and **never pass `createIfEmpty: true`**.
+
+Then close by group, not by memory: **"close every tab in your group"**, not "close the tab you created". The second phrasing is singular and silently leaves anything else behind.
+
+Tabs are scoped per MCP session, so one agent can neither see nor close another's — the orphans survive until a human clears them, and nothing in the fan-out reports the leak. Verify with `osascript -e 'tell application "Google Chrome" to get URL of every tab of every window'` after a run.
+
 ## After spawning — this is not the Agent tool
 
 `cca` agents are **independent interactive sessions**. They do not report back to you, and you will not get a task notification when they finish. Do not wait on them, and never claim or predict what one produced.
