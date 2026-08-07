@@ -39,8 +39,10 @@ Keep using the normal Agent tool when the work is read-only or non-conflicting �
 From the repo root, one invocation per agent:
 
 ```bash
-cca "the full prompt for this agent"
+cca "the full prompt for this agent" [extra flags for claude]
 ```
+
+Everything after the prompt is passed verbatim to the `claude` invocation inside the new window — see "Autonomy and model choice" below for the two flags worth passing.
 
 It takes the next free slot (`agent-1` … `agent-8`) automatically. **There is no name argument — never try to pass one.** The slot names are fixed on purpose: Claude Code grants folder trust once per directory, so spawning into a fresh path would make the user re-answer "do you trust the files in this folder?" on every single spawn. Reusing the same eight directories forever means they approve each one once, ever.
 
@@ -48,11 +50,21 @@ Fan out by calling it several times:
 
 ```bash
 cca "port the dashboard to the new table component, verify in the browser at :5173"
-cca "write and run e2e tests for checkout, use port :5174"
-cca "audit the API routes for missing auth checks"
+cca "write and run e2e tests for checkout, use port :5174" --dangerously-skip-permissions
+cca "audit the API routes for missing auth checks" --model haiku
 ```
 
 Fire them off back-to-back in a single command — the slot is claimed before the window opens, so parallel spawns each get their own directory and their own prompt.
+
+### Autonomy and model choice
+
+Decide both **per agent**, based on the task you're giving that agent — a mixed fleet is normal.
+
+**`--dangerously-skip-permissions`** makes the agent fully non-interactive: it never stops to ask permission, so its window runs unattended from spawn to finish. Choose it when the point of the fan-out is throughput — the user wants results, not eight windows each waiting on an "allow?" click they'll never see. Leave it off when the user said they want to watch or steer the agents, or when the task touches anything you wouldn't want executed without a human glance: the copies inherit real `.env` credentials, so an agent that will send email, hit production APIs, or delete data should keep its permission prompts unless the user explicitly asked for unattended.
+
+**`--model <model>`** (e.g. `--model haiku`, `--model sonnet`, `--model opus`) sets the model for that agent; omit it to inherit the user's default. Match strength to the task: mechanical work — visit a URL and screenshot it, run a test suite and report, apply a rote find-and-replace — runs fine and much cheaper on `haiku` or `sonnet`, while debugging, non-trivial refactors, and anything requiring judgment deserves the default or `opus`. When you downgrade a browser-touching agent, keep the prompt extra literal — a smaller model follows explicit steps better than it improvises.
+
+If the user stated a preference — "hands-off", "cheap", "use opus for the hard one" — honor it. Otherwise pick sensibly yourself and mention the choice in your post-spawn summary so it's visible and correctable.
 
 Each agent's working copy lands in `~/.claude/agents/agent-N/`.
 

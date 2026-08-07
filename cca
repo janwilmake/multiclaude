@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[ $# -ge 1 ] || { echo 'usage: cca "prompt"'; exit 1; }
+[ $# -ge 1 ] || { echo 'usage: cca "prompt" [claude flags...]'; exit 1; }
+
+PROMPT="$1"; shift
+# Everything after the prompt is passed to `claude` verbatim — e.g.
+# --dangerously-skip-permissions for an unattended run, or --model to pick a
+# model per agent. %q-quote each one now so the generated .command script
+# can't mangle spaces or reinterpret metacharacters.
+FLAGS=""
+for f in "$@"; do FLAGS="$FLAGS $(printf '%q' "$f")"; done
 
 REPO="$PWD"
 L="$HOME/.claude/launchers"; mkdir -p "$L"
@@ -60,7 +68,7 @@ done
 WORK="$A/$NAME"
 LOCK="$A/$NAME.lock"
 
-printf '%s' "$1" > "$L/$NAME.prompt"
+printf '%s' "$PROMPT" > "$L/$NAME.prompt"
 
 cat > "$L/$NAME.command" <<EOF
 #!/bin/bash
@@ -89,7 +97,7 @@ time (
 rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 cd "$WORK"
-claude --chrome "\$(cat "$L/$NAME.prompt")"
+claude --chrome$FLAGS "\$(cat "$L/$NAME.prompt")"
 # Deliberately not \`exec\`: exec replaces the process image and discards the
 # EXIT trap, so the lock would never be released and the slot would leak.
 "\$SHELL"
