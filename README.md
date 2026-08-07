@@ -19,7 +19,7 @@ One command per agent. Each agent gets:
 - **Its own Terminal window running interactive `claude --chrome`**, so it gets its own browser session and you can watch, interrupt, and steer it like a normal Claude Code session.
 - **A fixed slot name** (`agent-1` … `agent-8`), set as the window title so you can tell the windows apart, with a lock file so a new `cca` invocation never lands on a slot that's already busy. The slot is claimed before the window opens, so you can fire all eight spawns at once and each still gets its own directory.
 
-Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt and nothing else.
+Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt, optional flags for `claude`, and no name.
 
 When Claude exits, the window drops into your shell inside the agent's copy — so you can inspect the diff, run tests, or commit from there.
 
@@ -43,6 +43,15 @@ cca "audit the API routes for missing auth checks"
 
 Three Terminal windows, three isolated copies, three independent Chrome sessions.
 
+Anything after the prompt is passed straight to `claude`, so you can tune autonomy and model per agent:
+
+```bash
+cca "run the e2e suite and fix what breaks" --dangerously-skip-permissions
+cca "screenshot every page in the nav" --model haiku
+```
+
+`--dangerously-skip-permissions` makes that agent fully non-interactive — no permission prompts, so the window runs unattended (remember the copy inherits your real `.env`). `--model` picks a cheaper or stronger model for that agent; omit it to use your default.
+
 Fire them back-to-back or in parallel (`cca "..." &`) — claiming a slot takes a millisecond and happens before the window opens, so spawns never collide.
 
 Copies live in `~/.claude/agents/agent-N/`. The generated launcher scripts live in `~/.claude/launchers/`, and each slot's lock is `~/.claude/agents/agent-N.lock`.
@@ -50,41 +59,41 @@ Copies live in `~/.claude/agents/agent-N/`. The generated launcher scripts live 
 ## Install
 
 ```bash
-mkdir -p ~/bin
-curl -o ~/bin/cca https://raw.githubusercontent.com/janwilmake/multiclaude/main/cca
-chmod +x ~/bin/cca
+curl -fsSL https://raw.githubusercontent.com/janwilmake/multiclaude/main/install.sh | sh
 ```
 
-Make sure `~/bin` is on your `PATH` — add this to `~/.zshrc` (or `~/.bashrc`) if it isn't:
-
-```bash
-export PATH="$HOME/bin:$PATH"
-```
-
-Then `source ~/.zshrc` and check it's picked up:
+That drops `cca` on your `PATH` and installs the bundled Claude Code skill. Restart Claude Code afterwards so the skill is picked up, then check it's there:
 
 ```bash
 cca
-# usage: cca "prompt"
+# usage: cca "prompt" [claude flags...]
 ```
 
-Or just clone and symlink:
+Re-run the same line any time to update. It prints exactly what it wrote, and warns if the install directory isn't on your `PATH` or if `claude` isn't installed yet.
+
+`cca` goes in `~/.local/bin` or `~/bin` — whichever is already on your `PATH`, defaulting to `~/.local/bin`. The skill goes in `~/.claude/skills/multiclaude/`. Override with environment variables:
+
+```bash
+# install somewhere specific, from a branch, without the skill
+curl -fsSL https://raw.githubusercontent.com/janwilmake/multiclaude/main/install.sh \
+  | CCA_BIN_DIR=/usr/local/bin CCA_REF=some-branch CCA_SKILL=0 sh
+```
+
+(The variables go on `sh`, not on `curl` — a `VAR=x curl ... | sh` would set them for the download instead of the installer.)
+
+### Or clone and symlink
+
+If you'd rather track the repo — edits to your clone take effect immediately, and `install.sh` won't overwrite a symlinked skill:
 
 ```bash
 git clone https://github.com/janwilmake/multiclaude.git
 ln -s "$PWD/multiclaude/cca" ~/bin/cca
-```
-
-### Teach Claude Code to use it
-
-This repo ships a skill at [`.claude/skills/multiclaude/SKILL.md`](.claude/skills/multiclaude/SKILL.md) that tells Claude Code to reach for `cca` instead of its own subagents whenever the fanned-out work involves the browser. Install it globally:
-
-```bash
-mkdir -p ~/.claude/skills
 ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 ```
 
-Or drop it in a single project's `.claude/skills/` to scope it there. Restart Claude Code and it'll show up in the skill list.
+### What the skill does
+
+[`.claude/skills/multiclaude/SKILL.md`](.claude/skills/multiclaude/SKILL.md) tells Claude Code to reach for `cca` instead of its own subagents whenever the fanned-out work involves the browser. The installer puts it in `~/.claude/skills/` so it applies everywhere; drop a copy in a single project's `.claude/skills/` instead to scope it there.
 
 ## Requirements
 
