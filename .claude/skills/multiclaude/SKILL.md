@@ -124,6 +124,7 @@ Or have each agent push a branch, and merge from there.
 - **The copy is a plain directory, not a worktree.** Each agent has its own `.git`; merging back is manual.
 - **`.env` files are copied.** Agents inherit real local credentials — never point one at production data or a destructive flow without the user explicitly approving it.
 - **Eight fixed slots.** If all are busy, `cca` exits with `all 8 slots busy`. Wait for a window to close rather than looking for a way around it — spilling into a ninth directory would cost the user another folder-trust prompt, which is the whole reason the names are fixed. Locks (`~/.claude/agents/agent-N.lock`) hold the window's pid and are reclaimed automatically once that process is gone, so a `SIGKILL`'d window doesn't strand a slot.
+- **A slot comes back only if the agent leaves nothing behind.** When an agent's Claude exits, `cca` closes the window and frees the slot if the copy has no uncommitted changes and no commits that aren't pushed; otherwise the window stays and holds the slot until the user looks at it. So **tell each agent to commit its work on a branch and push it** — that is what returns the slot, and it's also how the user collects the work. An agent told to leave the changes uncommitted will hold its slot until a human closes the window, which is right for one agent and wrong for eight.
 
 ## If `cca` isn't installed
 

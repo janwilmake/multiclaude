@@ -21,7 +21,22 @@ One command per agent. Each agent gets:
 
 Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt, optional flags for `claude`, and no name.
 
-When Claude exits, the window drops into your shell inside the agent's copy — so you can inspect the diff, run tests, or commit from there.
+## When an agent finishes
+
+The slot belongs to the window, so a finished agent has to give its window up — otherwise eight overnight spawns fill every slot and the ninth call fails against eight windows that stopped working hours ago.
+
+So when Claude exits, `cca` asks one question: **is anything left here that exists nowhere else?**
+
+- **Nothing left** — no uncommitted changes, and every commit is either pushed or was already in the repo when the copy was made. The window says so, waits 15 seconds, and closes itself. The slot is free.
+- **Something left** — the window drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. It keeps the slot until you close it, and prints which of the two it found.
+
+Press any key during the countdown to keep a window that was going to close. `CCA_CLOSE_DELAY` sets the wait in seconds; `CCA_CLOSE_DELAY=never` restores the old behaviour, where every window stays until you close it by hand.
+
+Commits already in the source repo are subtracted before the check, so a checkout sitting a few commits ahead of its remote — the normal state of a working branch — doesn't make every copy look like it holds unpushed work.
+
+The practical consequence: **tell your agents to push a branch.** An agent that pushes hands its slot back; an agent that leaves the work sitting in the copy holds the slot until you look at it, which is what you want at nine in the morning and not at three.
+
+A window that closes itself needs no permission dialog. Terminal refuses to close a window that still has processes on its tty — it asks "terminate running processes?" instead — so the close is handed to a small helper that leaves the tty session and fires once the window's shell is gone.
 
 ## Usage
 
@@ -107,8 +122,9 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 - The script skips build output when copying (`build/`, `.react-router/`, `coverage/`) — edit that `case` line for your project's artifacts.
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
 - **Claude Code's Bash sandbox denies writes under `~/.claude/`**, so a sandboxed `cca` call can't claim a slot. Run it with the sandbox disabled (the bundled skill tells Claude to do this). `cca` fails immediately with the underlying error rather than retrying, so it's obvious when this is what happened.
-- Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory — a new path would cost another folder-trust prompt, so waiting is the intended behaviour. Close a window to free its slot.
+- Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory. `CCA_SLOTS=12 cca "..."` raises the cap; each new slot costs one folder-trust prompt, once, the first time an agent lands in it. Since finished agents free their own slots, running out usually means eight agents really are working.
 - The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
+- **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again, which is why the copy has to be empty of unique work before the slot goes back in the pool. Anything the agent left outside git — a screenshot, a scratch file — counts as work and keeps the slot.
 
 ## License
 

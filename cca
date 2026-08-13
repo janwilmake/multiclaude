@@ -14,6 +14,29 @@ REPO="$PWD"
 L="$HOME/.claude/launchers"; mkdir -p "$L"
 A="$HOME/.claude/agents"; mkdir -p "$A"
 
+# Each extra slot costs one folder-trust prompt, once, the first time an agent
+# lands in it — so raising this is cheap, but 8 windows is already a lot to
+# watch. Slots free themselves now (see the end of the generated launcher), so
+# running out usually means eight agents really are working, not that finished
+# ones never gave their slot back.
+SLOTS="${CCA_SLOTS:-8}"
+# Seconds a finished agent leaves its window open before closing it. Any key
+# keeps the window. `never` restores the old behaviour: the window stays, and
+# holds its slot, until you close it.
+CLOSE_DELAY="${CCA_CLOSE_DELAY:-15}"
+
+# Interactive claude never exits by itself — it finishes the task and sits at
+# its prompt, which is why windows pile up overnight and every slot ends up
+# held by an agent that stopped working hours ago. A Stop hook fires each time
+# the agent stops talking, and that is the one signal that means "done".
+# Arm it for unattended runs only: a session you are watching should not end
+# because you took two minutes to read it.
+GRACE="${CCA_GRACE:-120}"
+case "$FLAGS" in
+  *--dangerously-skip-permissions*) AUTO_EXIT="${CCA_AUTO_EXIT:-1}" ;;
+  *) AUTO_EXIT="${CCA_AUTO_EXIT:-0}" ;;
+esac
+
 MUTEX="$A/.cca-claim"
 age() { echo $(( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || date +%s) )); }
 
@@ -48,7 +71,7 @@ trap 'rmdir "$MUTEX" 2>/dev/null || true' EXIT
 
 # Fixed slots — a fresh path would re-trigger Claude's folder-trust prompt.
 NAME=""
-for n in $(seq 1 8); do
+for n in $(seq 1 "$SLOTS"); do
   LOCK="$A/agent-$n.lock"
   # Transitional: locks written by cca before the lock moved out of the work
   # directory. Released by those windows on exit; delete by hand if one sticks.
@@ -64,11 +87,19 @@ for n in $(seq 1 8); do
   fi
   : > "$LOCK"; NAME="agent-$n"; break
 done
-[ -n "$NAME" ] || { echo "all 8 slots busy"; exit 1; }
+[ -n "$NAME" ] || { echo "all $SLOTS slots busy"; exit 1; }
 WORK="$A/$NAME"
 LOCK="$A/$NAME.lock"
 
 printf '%s' "$PROMPT" > "$L/$NAME.prompt"
+
+# The hook goes on the command line rather than in the copy's settings file,
+# so it dies with the session and cannot outlive it or follow the work back
+# into a commit.
+HOOK=""
+if [ "$AUTO_EXIT" != 0 ]; then
+  HOOK=" --settings $(printf '%q' "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $L/$NAME.stop\"}]}]}}")"
+fi
 
 cat > "$L/$NAME.command" <<EOF
 #!/bin/bash
@@ -97,7 +128,91 @@ time (
 rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 cd "$WORK"
-claude --chrome$FLAGS "\$(cat "$L/$NAME.prompt")"
+
+# Every commit that exists here before the agent starts. The check after the
+# run subtracts these, so it only sees what this agent made. Without it a
+# source repo that sits a few commits ahead of its remote — normal, hyre3 has
+# 17 — would make every copy look like it holds work nobody else has, and no
+# slot would ever come back.
+git rev-parse --branches HEAD 2>/dev/null | sort -u > "$L/$NAME.base" || : > "$L/$NAME.base"
+
+rm -f "$L/$NAME.stop"
+if [ "$AUTO_EXIT" != 0 ]; then
+  SELF=\$\$
+  (
+    # The Stop hook touches the marker every time the agent stops talking.
+    # Wait out a grace period before acting on it: if someone replies, the
+    # agent talks again and the marker moves, so only a session nobody picked
+    # up gets ended.
+    while kill -0 \$SELF 2>/dev/null; do
+      if [ -e "$L/$NAME.stop" ]; then
+        t="\$(stat -f %m "$L/$NAME.stop")"
+        sleep $GRACE
+        [ "\$t" = "\$(stat -f %m "$L/$NAME.stop" 2>/dev/null || echo moved)" ] || continue
+        cpid="\$(pgrep -P \$SELF -x claude | head -1)"
+        [ -n "\$cpid" ] || exit 0
+        kill "\$cpid"
+        sleep 1
+        echo "$NAME finished and nobody replied for ${GRACE}s — session ended."
+        exit 0
+      fi
+      sleep 5
+    done
+  ) &
+  watchdog=\$!
+fi
+
+claude --chrome$HOOK$FLAGS "\$(cat "$L/$NAME.prompt")"
+[ -n "\${watchdog:-}" ] && kill "\$watchdog" 2>/dev/null
+
+# Is anything left here that exists nowhere else? The next agent to take this
+# slot deletes the directory, so this is the question that decides whether the
+# slot can go back in the pool.
+left=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  # The node_modules symlink is cca's own doing, not the agent's work. Most
+  # repos ignore the path and never see it; the ones that don't would hold
+  # every slot forever over a file they did not create.
+  [ -n "\$(git status --porcelain | grep -v '^?? node_modules$')" ] && left="uncommitted changes"
+  if [ -z "\$left" ]; then
+    # Pushed commits are safe, and so are the ones from the baseline.
+    excl=""
+    for c in \$(git for-each-ref --format='%(objectname)' refs/remotes) \$(cat "$L/$NAME.base"); do
+      excl="\$excl ^\$c"
+    done
+    [ -n "\$(git log --oneline -1 --branches HEAD \$excl 2>/dev/null)" ] && left="commits that are only here"
+  fi
+fi
+
+echo ""
+if [ -n "\$left" ]; then
+  echo "$NAME keeps its slot: \$left in $WORK"
+  echo "push the work, or close this window, to free the slot."
+elif [ "$CLOSE_DELAY" = never ]; then
+  echo "$NAME is done and left nothing behind. Close this window to free the slot."
+else
+  echo "$NAME is done and left nothing behind — closing in ${CLOSE_DELAY}s. Press any key to keep the window."
+  if ! read -r -t $CLOSE_DELAY -n 1; then
+    # Terminal will not close a window that still has processes on its tty; it
+    # puts up a "terminate running processes?" dialog instead, which is worse
+    # than leaving the window open. So the close is handed to a helper that
+    # leaves the tty session and fires once this script and its login shell
+    # are gone. If python3 is missing the window just stays — the slot is
+    # freed either way, by the EXIT trap below.
+    /usr/bin/python3 - "\$(tty)" 2>/dev/null <<'PY'
+import os, subprocess, sys, time
+if os.fork() == 0:
+    os.setsid()
+    time.sleep(2)
+    subprocess.run(["osascript", "-e",
+        'on run argv\ntell application "Terminal" to close '
+        '(every window whose tty of tabs contains (item 1 of argv))\nend run',
+        sys.argv[1]])
+    os._exit(0)
+PY
+    exit 0
+  fi
+fi
 # Deliberately not \`exec\`: exec replaces the process image and discards the
 # EXIT trap, so the lock would never be released and the slot would leak.
 "\$SHELL"
