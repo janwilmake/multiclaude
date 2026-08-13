@@ -168,11 +168,11 @@ SELF=\$\$
   done
 ) &
 watchdog=\$!
+
 EOF
 fi
 
 cat >> "$L/$NAME.command" <<EOF
-
 claude --chrome$HOOK$FLAGS "\$(cat "$L/$NAME.prompt")"
 EOF
 
