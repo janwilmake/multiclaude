@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[ $# -ge 1 ] || { echo 'usage: cca "prompt" [claude flags...]'; exit 1; }
+[ $# -ge 1 ] || { echo 'usage: cca "prompt" [--non-interactive] [claude flags...]'; exit 1; }
 
 PROMPT="$1"; shift
 # Everything after the prompt is passed to `claude` verbatim — e.g.
 # --dangerously-skip-permissions for an unattended run, or --model to pick a
 # model per agent. %q-quote each one now so the generated .command script
 # can't mangle spaces or reinterpret metacharacters.
+#
+# --non-interactive is cca's own flag and never reaches claude. It says nobody
+# is going to read this window, which is the one thing cca cannot work out for
+# itself: an agent with a genuine question looks exactly like an agent that
+# has finished.
+NONINTERACTIVE=0
 FLAGS=""
-for f in "$@"; do FLAGS="$FLAGS $(printf '%q' "$f")"; done
+for f in "$@"; do
+  if [ "$f" = --non-interactive ]; then NONINTERACTIVE=1; continue; fi
+  FLAGS="$FLAGS $(printf '%q' "$f")"
+done
+case "$NONINTERACTIVE$FLAGS" in
+  1*--dangerously-skip-permissions*) ;;
+  1*) echo "cca: --non-interactive without --dangerously-skip-permissions — an agent stopped at a permission prompt is not a finished agent, and nobody is there to answer it" >&2 ;;
+esac
 
 REPO="$PWD"
 L="$HOME/.claude/launchers"; mkdir -p "$L"
@@ -16,26 +29,13 @@ A="$HOME/.claude/agents"; mkdir -p "$A"
 
 # Each extra slot costs one folder-trust prompt, once, the first time an agent
 # lands in it — so raising this is cheap, but 8 windows is already a lot to
-# watch. Slots free themselves now (see the end of the generated launcher), so
-# running out usually means eight agents really are working, not that finished
-# ones never gave their slot back.
+# watch.
 SLOTS="${CCA_SLOTS:-8}"
-# Seconds a finished agent leaves its window open before closing it. Any key
-# keeps the window. `never` restores the old behaviour: the window stays, and
-# holds its slot, until you close it.
+# --non-interactive only. Seconds a finished agent leaves its window open
+# before closing it, and seconds of silence after the agent stops talking
+# before its session ends.
 CLOSE_DELAY="${CCA_CLOSE_DELAY:-15}"
-
-# Interactive claude never exits by itself — it finishes the task and sits at
-# its prompt, which is why windows pile up overnight and every slot ends up
-# held by an agent that stopped working hours ago. A Stop hook fires each time
-# the agent stops talking, and that is the one signal that means "done".
-# Arm it for unattended runs only: a session you are watching should not end
-# because you took two minutes to read it.
 GRACE="${CCA_GRACE:-120}"
-case "$FLAGS" in
-  *--dangerously-skip-permissions*) AUTO_EXIT="${CCA_AUTO_EXIT:-1}" ;;
-  *) AUTO_EXIT="${CCA_AUTO_EXIT:-0}" ;;
-esac
 
 MUTEX="$A/.cca-claim"
 age() { echo $(( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || date +%s) )); }
@@ -99,7 +99,7 @@ printf '%s' "$PROMPT" > "$L/$NAME.prompt"
 # writes under ~/.claude/ — a marker there is silently never written.
 MARK="/tmp/cca-$(id -u)-$NAME.stop"
 HOOK=""
-if [ "$AUTO_EXIT" != 0 ]; then
+if [ "$NONINTERACTIVE" = 1 ]; then
   HOOK=" --settings $(printf '%q' "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $MARK\"}]}]}}")"
 fi
 
@@ -130,6 +130,13 @@ time (
 rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 cd "$WORK"
+EOF
+
+# Everything below only exists in an unattended launcher. An interactive one
+# is the script it always was: run claude, drop into a shell, and wait for a
+# human — who may well be the point, if the agent has a question worth asking.
+if [ "$NONINTERACTIVE" = 1 ]; then
+cat >> "$L/$NAME.command" <<EOF
 
 # Every commit that exists here before the agent starts. The check after the
 # run subtracts these, so it only sees what this agent made. Without it a
@@ -139,33 +146,39 @@ cd "$WORK"
 git rev-parse --branches HEAD 2>/dev/null | sort -u > "$L/$NAME.base" || : > "$L/$NAME.base"
 
 rm -f "$MARK"
-if [ "$AUTO_EXIT" != 0 ]; then
-  SELF=\$\$
-  (
-    # The Stop hook touches the marker every time the agent stops talking.
-    # Wait out a grace period before acting on it: if someone replies, the
-    # agent talks again and the marker moves, so only a session nobody picked
-    # up gets ended.
-    while kill -0 \$SELF 2>/dev/null; do
-      if [ -e "$MARK" ]; then
-        t="\$(stat -f %m "$MARK")"
-        sleep $GRACE
-        [ "\$t" = "\$(stat -f %m "$MARK" 2>/dev/null || echo moved)" ] || continue
-        cpid="\$(pgrep -P \$SELF -x claude | head -1)"
-        [ -n "\$cpid" ] || exit 0
-        kill "\$cpid"
-        sleep 1
-        echo "$NAME finished and nobody replied for ${GRACE}s — session ended."
-        exit 0
-      fi
-      sleep 5
-    done
-  ) &
-  watchdog=\$!
+SELF=\$\$
+(
+  # The Stop hook touches the marker every time the agent stops talking. Wait
+  # out a grace period before acting on it: if someone replies, the agent
+  # talks again and the marker moves, so only a session nobody picked up gets
+  # ended.
+  while kill -0 \$SELF 2>/dev/null; do
+    if [ -e "$MARK" ]; then
+      t="\$(stat -f %m "$MARK")"
+      sleep $GRACE
+      [ "\$t" = "\$(stat -f %m "$MARK" 2>/dev/null || echo moved)" ] || continue
+      cpid="\$(pgrep -P \$SELF -x claude | head -1)"
+      [ -n "\$cpid" ] || exit 0
+      kill "\$cpid"
+      sleep 1
+      echo "$NAME finished and nobody replied for ${GRACE}s — session ended."
+      exit 0
+    fi
+    sleep 5
+  done
+) &
+watchdog=\$!
+EOF
 fi
 
+cat >> "$L/$NAME.command" <<EOF
+
 claude --chrome$HOOK$FLAGS "\$(cat "$L/$NAME.prompt")"
-[ -n "\${watchdog:-}" ] && kill "\$watchdog" 2>/dev/null
+EOF
+
+if [ "$NONINTERACTIVE" = 1 ]; then
+cat >> "$L/$NAME.command" <<EOF
+kill "\$watchdog" 2>/dev/null
 
 # Is anything left here that exists nowhere else? The next agent to take this
 # slot deletes the directory, so this is the question that decides whether the
@@ -190,8 +203,6 @@ echo ""
 if [ -n "\$left" ]; then
   echo "$NAME keeps its slot: \$left in $WORK"
   echo "push the work, or close this window, to free the slot."
-elif [ "$CLOSE_DELAY" = never ]; then
-  echo "$NAME is done and left nothing behind. Close this window to free the slot."
 else
   echo "$NAME is done and left nothing behind — closing in ${CLOSE_DELAY}s. Press any key to keep the window."
   if ! read -r -t $CLOSE_DELAY -n 1; then
@@ -215,6 +226,10 @@ PY
     exit 0
   fi
 fi
+EOF
+fi
+
+cat >> "$L/$NAME.command" <<EOF
 # Deliberately not \`exec\`: exec replaces the process image and discards the
 # EXIT trap, so the lock would never be released and the slot would leak.
 "\$SHELL"

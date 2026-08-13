@@ -21,34 +21,32 @@ One command per agent. Each agent gets:
 
 Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt, optional flags for `claude`, and no name.
 
-## When an agent finishes
+## When an agent finishes: `--non-interactive`
 
-The slot belongs to the window, so a finished agent has to give its window up — otherwise eight overnight spawns fill every slot and the ninth call fails against eight windows that stopped working hours ago.
+Interactive Claude never exits by itself. It finishes the task, says so, and sits at its prompt — so its window keeps its slot until you close it by hand. When you are there, that is the point: the windows are visible precisely so you can answer an agent that has a real question, a blocker, or something worth reading. At three in the morning it means eight windows that stopped working hours ago hold every slot, and the ninth spawn fails.
 
-Two things have to happen: the session has to end, and the window has to close.
+So the handover is one flag:
 
-### Ending the session
+```bash
+cca "audit the API routes for missing auth checks" --non-interactive --dangerously-skip-permissions
+```
 
-Interactive Claude never exits by itself. It finishes the task, says so, and sits at its prompt — which is right when you are there to type the next thing, and useless at three in the morning.
+`--non-interactive` belongs to `cca` and never reaches `claude`. It says nobody is going to read this window, which is the one thing `cca` cannot work out for itself. Two things follow.
 
-So an unattended agent gets a `Stop` hook, which fires every time the agent stops talking, and a watchdog that ends the session when nobody replies within two minutes. Reply and the agent talks again, the hook fires again, and the clock restarts — the watchdog only ends a session nobody picked up.
+**The session ends when the agent stops talking.** A `Stop` hook marks each time it does, and a watchdog ends the session if nobody replies within two minutes. Reply and the agent talks again, the marker moves, and the clock restarts — only a session nobody picked up gets ended. `CCA_GRACE` sets the wait. The hook is passed on the command line, so it belongs to that one session: it is never written into the copy's settings and cannot follow the work into a commit.
 
-This arms itself when you pass `--dangerously-skip-permissions`, since that flag already means "nobody is watching this window". Sessions without it are left alone, because you are presumably reading them. `CCA_AUTO_EXIT=1` arms it anyway, `CCA_AUTO_EXIT=0` disables it, and `CCA_GRACE` sets the wait in seconds.
+**The window closes if the copy holds nothing unique.** When Claude exits, `cca` asks one question — is anything here that exists nowhere else?
 
-The hook is passed on the command line, so it belongs to that one session — it is never written into the copy's settings and cannot follow the work into a commit. If you already have `Stop` hooks of your own, this one is layered over them for the agent's session.
+- **Nothing left** — no uncommitted changes, and every commit is either pushed or was already in the repo when the copy was made. The window says so, waits 15 seconds, and closes itself. The slot is free. Press any key during the countdown to keep it; `CCA_CLOSE_DELAY` sets the wait.
+- **Something left** — the window drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. It keeps the slot until you close it, and prints what it found.
 
-### Closing the window
+Commits already in the source repo are subtracted before that check, so a checkout sitting a few commits ahead of its remote — the normal state of a working branch — doesn't make every copy look like it holds unpushed work.
 
-When Claude exits — on its own, by your hand, or through the watchdog — `cca` asks one question: **is anything left here that exists nowhere else?**
+The practical consequence: **tell an unattended agent to push a branch.** Pushing is what hands the slot back.
 
-- **Nothing left** — no uncommitted changes, and every commit is either pushed or was already in the repo when the copy was made. The window says so, waits 15 seconds, and closes itself. The slot is free.
-- **Something left** — the window drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. It keeps the slot until you close it, and prints which of the two it found.
+Pair the flag with `--dangerously-skip-permissions`. Without it the agent can still stop at a permission prompt, and a stopped agent is not a finished one — the `Stop` hook never fires and the watchdog waits forever. `cca` prints a warning if you pass one without the other.
 
-Press any key during the countdown to keep a window that was going to close. `CCA_CLOSE_DELAY` sets the wait in seconds; `CCA_CLOSE_DELAY=never` restores the old behaviour, where every window stays until you close it by hand.
-
-Commits already in the source repo are subtracted before the check, so a checkout sitting a few commits ahead of its remote — the normal state of a working branch — doesn't make every copy look like it holds unpushed work.
-
-The practical consequence: **tell your agents to push a branch.** An agent that pushes hands its slot back; an agent that leaves the work sitting in the copy holds the slot until you look at it, which is what you want at nine in the morning and not at three.
+Without `--non-interactive`, nothing changes: the window stays, holds its slot, and waits for you.
 
 A window that closes itself needs no permission dialog. Terminal refuses to close a window that still has processes on its tty — it asks "terminate running processes?" instead — so the close is handed to a small helper that leaves the tty session and fires once the window's shell is gone.
 
@@ -72,14 +70,15 @@ cca "audit the API routes for missing auth checks"
 
 Three Terminal windows, three isolated copies, three independent Chrome sessions.
 
-Anything after the prompt is passed straight to `claude`, so you can tune autonomy and model per agent:
+Anything after the prompt is passed straight to `claude` — except `--non-interactive`, which `cca` keeps for itself — so you can tune autonomy and model per agent:
 
 ```bash
 cca "run the e2e suite and fix what breaks" --dangerously-skip-permissions
 cca "screenshot every page in the nav" --model haiku
+cca "port the last three routes and push a branch" --non-interactive --dangerously-skip-permissions
 ```
 
-`--dangerously-skip-permissions` makes that agent fully non-interactive — no permission prompts, so the window runs unattended (remember the copy inherits your real `.env`). `--model` picks a cheaper or stronger model for that agent; omit it to use your default.
+`--dangerously-skip-permissions` stops the agent asking permission, so the window runs unattended (remember the copy inherits your real `.env`). `--model` picks a cheaper or stronger model for that agent; omit it to use your default. `--non-interactive` makes the agent give its window and slot back when it is done — see [When an agent finishes](#when-an-agent-finishes---non-interactive).
 
 Fire them back-to-back or in parallel (`cca "..." &`) — claiming a slot takes a millisecond and happens before the window opens, so spawns never collide.
 
@@ -136,9 +135,9 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 - The script skips build output when copying (`build/`, `.react-router/`, `coverage/`) — edit that `case` line for your project's artifacts.
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
 - **Claude Code's Bash sandbox denies writes under `~/.claude/`**, so a sandboxed `cca` call can't claim a slot. Run it with the sandbox disabled (the bundled skill tells Claude to do this). `cca` fails immediately with the underlying error rather than retrying, so it's obvious when this is what happened.
-- Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory. `CCA_SLOTS=12 cca "..."` raises the cap; each new slot costs one folder-trust prompt, once, the first time an agent lands in it. Since finished agents free their own slots, running out usually means eight agents really are working.
+- Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory. `CCA_SLOTS=12 cca "..."` raises the cap; each new slot costs one folder-trust prompt, once, the first time an agent lands in it.
 - The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
-- **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again, which is why the copy has to be empty of unique work before the slot goes back in the pool. Anything the agent left outside git — a screenshot, a scratch file — counts as work and keeps the slot.
+- **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again, which is why a `--non-interactive` copy has to be empty of unique work before the slot goes back in the pool. Anything the agent left outside git — a screenshot, a scratch file — counts as work and keeps the slot.
 
 ## License
 
