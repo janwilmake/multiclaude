@@ -95,10 +95,12 @@ printf '%s' "$PROMPT" > "$L/$NAME.prompt"
 
 # The hook goes on the command line rather than in the copy's settings file,
 # so it dies with the session and cannot outlive it or follow the work back
-# into a commit.
+# into a commit. The marker lives in /tmp because Claude Code's sandbox denies
+# writes under ~/.claude/ — a marker there is silently never written.
+MARK="/tmp/cca-$(id -u)-$NAME.stop"
 HOOK=""
 if [ "$AUTO_EXIT" != 0 ]; then
-  HOOK=" --settings $(printf '%q' "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $L/$NAME.stop\"}]}]}}")"
+  HOOK=" --settings $(printf '%q' "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $MARK\"}]}]}}")"
 fi
 
 cat > "$L/$NAME.command" <<EOF
@@ -136,7 +138,7 @@ cd "$WORK"
 # slot would ever come back.
 git rev-parse --branches HEAD 2>/dev/null | sort -u > "$L/$NAME.base" || : > "$L/$NAME.base"
 
-rm -f "$L/$NAME.stop"
+rm -f "$MARK"
 if [ "$AUTO_EXIT" != 0 ]; then
   SELF=\$\$
   (
@@ -145,10 +147,10 @@ if [ "$AUTO_EXIT" != 0 ]; then
     # agent talks again and the marker moves, so only a session nobody picked
     # up gets ended.
     while kill -0 \$SELF 2>/dev/null; do
-      if [ -e "$L/$NAME.stop" ]; then
-        t="\$(stat -f %m "$L/$NAME.stop")"
+      if [ -e "$MARK" ]; then
+        t="\$(stat -f %m "$MARK")"
         sleep $GRACE
-        [ "\$t" = "\$(stat -f %m "$L/$NAME.stop" 2>/dev/null || echo moved)" ] || continue
+        [ "\$t" = "\$(stat -f %m "$MARK" 2>/dev/null || echo moved)" ] || continue
         cpid="\$(pgrep -P \$SELF -x claude | head -1)"
         [ -n "\$cpid" ] || exit 0
         kill "\$cpid"

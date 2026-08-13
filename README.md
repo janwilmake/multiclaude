@@ -25,7 +25,21 @@ Slot names are **not** configurable, and that's deliberate. Claude Code asks "do
 
 The slot belongs to the window, so a finished agent has to give its window up — otherwise eight overnight spawns fill every slot and the ninth call fails against eight windows that stopped working hours ago.
 
-So when Claude exits, `cca` asks one question: **is anything left here that exists nowhere else?**
+Two things have to happen: the session has to end, and the window has to close.
+
+### Ending the session
+
+Interactive Claude never exits by itself. It finishes the task, says so, and sits at its prompt — which is right when you are there to type the next thing, and useless at three in the morning.
+
+So an unattended agent gets a `Stop` hook, which fires every time the agent stops talking, and a watchdog that ends the session when nobody replies within two minutes. Reply and the agent talks again, the hook fires again, and the clock restarts — the watchdog only ends a session nobody picked up.
+
+This arms itself when you pass `--dangerously-skip-permissions`, since that flag already means "nobody is watching this window". Sessions without it are left alone, because you are presumably reading them. `CCA_AUTO_EXIT=1` arms it anyway, `CCA_AUTO_EXIT=0` disables it, and `CCA_GRACE` sets the wait in seconds.
+
+The hook is passed on the command line, so it belongs to that one session — it is never written into the copy's settings and cannot follow the work into a commit. If you already have `Stop` hooks of your own, this one is layered over them for the agent's session.
+
+### Closing the window
+
+When Claude exits — on its own, by your hand, or through the watchdog — `cca` asks one question: **is anything left here that exists nowhere else?**
 
 - **Nothing left** — no uncommitted changes, and every commit is either pushed or was already in the repo when the copy was made. The window says so, waits 15 seconds, and closes itself. The slot is free.
 - **Something left** — the window drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. It keeps the slot until you close it, and prints which of the two it found.
