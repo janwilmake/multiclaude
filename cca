@@ -85,7 +85,7 @@ for n in $(seq 1 "$SLOTS"); do
     if [ -z "$pid" ] && [ "$(age "$LOCK")" -lt 120 ]; then continue; fi
     rm -f "$LOCK"   # SIGKILL'd window, or a launch that never happened
   fi
-  : > "$LOCK"; NAME="agent-$n"; break
+  : > "$LOCK"; NAME="agent-$n"; NUM="$n"; break
 done
 [ -n "$NAME" ] || { echo "all $SLOTS slots busy"; exit 1; }
 WORK="$A/$NAME"
@@ -130,6 +130,16 @@ time (
 rm -rf "$WORK/.claude/worktrees"
 ln -s "$REPO/node_modules" "$WORK/node_modules"
 cd "$WORK"
+# Give the window a colour of its own. The login shell that launched this
+# script already ran any cd-hook colouring — back when the cwd was still
+# \$HOME — so without this every agent window is the same colour as every
+# other. The hue comes from the slot number, not from hashing \$WORK: eight
+# sibling paths hash to hues that collide often enough to matter (agent-1 and
+# agent-3 landed one degree apart), and evenly spaced slots never can.
+# Optional: no termcolor, no colour, nothing else changes.
+# https://github.com/janwilmake/termcolor
+TC="\$HOME/.local/bin/termcolor"
+[ -x "\$TC" ] && { "\$TC" hue $(( (NUM - 1) * 360 / SLOTS )) >/dev/null 2>&1 || "\$TC" auto "$WORK" >/dev/null 2>&1; }
 EOF
 
 # Everything below only exists in an unattended launcher. An interactive one
