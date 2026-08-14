@@ -148,13 +148,6 @@ EOF
 if [ "$NONINTERACTIVE" = 1 ]; then
 cat >> "$L/$NAME.command" <<EOF
 
-# Every commit that exists here before the agent starts. The check after the
-# run subtracts these, so it only sees what this agent made. Without it a
-# source repo that sits a few commits ahead of its remote — normal, hyre3 has
-# 17 — would make every copy look like it holds work nobody else has, and no
-# slot would ever come back.
-git rev-parse --branches HEAD 2>/dev/null | sort -u > "$L/$NAME.base" || : > "$L/$NAME.base"
-
 rm -f "$MARK"
 SELF=\$\$
 (
@@ -190,39 +183,21 @@ if [ "$NONINTERACTIVE" = 1 ]; then
 cat >> "$L/$NAME.command" <<EOF
 kill "\$watchdog" 2>/dev/null
 
-# Is anything left here that exists nowhere else? The next agent to take this
-# slot deletes the directory, so this is the question that decides whether the
-# slot can go back in the pool.
-left=""
-if git rev-parse --git-dir >/dev/null 2>&1; then
-  # The node_modules symlink is cca's own doing, not the agent's work. Most
-  # repos ignore the path and never see it; the ones that don't would hold
-  # every slot forever over a file they did not create.
-  [ -n "\$(git status --porcelain | grep -v '^?? node_modules$')" ] && left="uncommitted changes"
-  if [ -z "\$left" ]; then
-    # Pushed commits are safe, and so are the ones from the baseline.
-    excl=""
-    for c in \$(git for-each-ref --format='%(objectname)' refs/remotes) \$(cat "$L/$NAME.base"); do
-      excl="\$excl ^\$c"
-    done
-    [ -n "\$(git log --oneline -1 --branches HEAD \$excl 2>/dev/null)" ] && left="commits that are only here"
-  fi
-fi
-
+# The window closes when the agent finishes, whether or not the copy still
+# holds work. It used to keep the slot over uncommitted changes or unpushed
+# commits, which meant a run nobody watched ended with eight windows open and
+# no free slots. The countdown is the escape hatch: the next agent to take
+# this slot deletes the directory, so press a key to keep anything in $WORK.
 echo ""
-if [ -n "\$left" ]; then
-  echo "$NAME keeps its slot: \$left in $WORK"
-  echo "push the work, or close this window, to free the slot."
-else
-  echo "$NAME is done and left nothing behind — closing in ${CLOSE_DELAY}s. Press any key to keep the window."
-  if ! read -r -t $CLOSE_DELAY -n 1; then
-    # Terminal will not close a window that still has processes on its tty; it
-    # puts up a "terminate running processes?" dialog instead, which is worse
-    # than leaving the window open. So the close is handed to a helper that
-    # leaves the tty session and fires once this script and its login shell
-    # are gone. If python3 is missing the window just stays — the slot is
-    # freed either way, by the EXIT trap below.
-    /usr/bin/python3 - "\$(tty)" 2>/dev/null <<'PY'
+echo "$NAME is done — closing in ${CLOSE_DELAY}s. Press any key to keep the window."
+if ! read -r -t $CLOSE_DELAY -n 1; then
+  # Terminal will not close a window that still has processes on its tty; it
+  # puts up a "terminate running processes?" dialog instead, which is worse
+  # than leaving the window open. So the close is handed to a helper that
+  # leaves the tty session and fires once this script and its login shell
+  # are gone. If python3 is missing the window just stays — the slot is
+  # freed either way, by the EXIT trap below.
+  /usr/bin/python3 - "\$(tty)" 2>/dev/null <<'PY'
 import os, subprocess, sys, time
 if os.fork() == 0:
     os.setsid()
@@ -233,8 +208,7 @@ if os.fork() == 0:
         sys.argv[1]])
     os._exit(0)
 PY
-    exit 0
-  fi
+  exit 0
 fi
 EOF
 fi

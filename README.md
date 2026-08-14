@@ -36,14 +36,11 @@ cca "audit the API routes for missing auth checks" --non-interactive --dangerous
 
 **The session ends when the agent stops talking.** A `Stop` hook marks each time it does, and a watchdog ends the session if nobody replies within two minutes. Reply and the agent talks again, the marker moves, and the clock restarts — only a session nobody picked up gets ended. `CCA_GRACE` sets the wait. The hook is passed on the command line, so it belongs to that one session: it is never written into the copy's settings and cannot follow the work into a commit.
 
-**The window closes if the copy holds nothing unique.** When Claude exits, `cca` asks one question — is anything here that exists nowhere else?
+**The window closes when the agent finishes.** Claude exits, the window says it is done, waits 15 seconds, and closes itself. The slot is free. Press any key during the countdown to keep the window — it drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. `CCA_CLOSE_DELAY` sets the wait.
 
-- **Nothing left** — no uncommitted changes, and every commit is either pushed or was already in the repo when the copy was made. The window says so, waits 15 seconds, and closes itself. The slot is free. Press any key during the countdown to keep it; `CCA_CLOSE_DELAY` sets the wait.
-- **Something left** — the window drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. It keeps the slot until you close it, and prints what it found.
+It closes whether or not the copy still holds work. Earlier versions kept the slot over uncommitted changes or unpushed commits, which meant an unattended run ended with eight open windows and no free slots — the opposite of what the flag is for.
 
-Commits already in the source repo are subtracted before that check, so a checkout sitting a few commits ahead of its remote — the normal state of a working branch — doesn't make every copy look like it holds unpushed work.
-
-The practical consequence: **tell an unattended agent to push a branch.** Pushing is what hands the slot back.
+The practical consequence: **tell an unattended agent to push a branch.** The next agent to take the slot deletes the directory, so anything left behind and unpushed is gone.
 
 Pair the flag with `--dangerously-skip-permissions`. Without it the agent can still stop at a permission prompt, and a stopped agent is not a finished one — the `Stop` hook never fires and the watchdog waits forever. `cca` prints a warning if you pass one without the other.
 
@@ -138,7 +135,7 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 - **Claude Code's Bash sandbox denies writes under `~/.claude/`**, so a sandboxed `cca` call can't claim a slot. Run it with the sandbox disabled (the bundled skill tells Claude to do this). `cca` fails immediately with the underlying error rather than retrying, so it's obvious when this is what happened.
 - Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory. `CCA_SLOTS=12 cca "..."` raises the cap; each new slot costs one folder-trust prompt, once, the first time an agent lands in it.
 - The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
-- **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again, which is why a `--non-interactive` copy has to be empty of unique work before the slot goes back in the pool. Anything the agent left outside git — a screenshot, a scratch file — counts as work and keeps the slot.
+- **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again. A `--non-interactive` window closes itself even when the copy holds uncommitted changes, unpushed commits, or a scratch file the agent wrote outside git — so tell an unattended agent to push, or press a key during its countdown to keep the window.
 
 ## License
 
