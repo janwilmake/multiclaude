@@ -118,17 +118,33 @@ mkdir -p "$WORK"
 # Clone top-level entries one at a time, skipping what we would only delete again.
 # cp -Rc has no --exclude, and clonefile is O(1) in bytes but O(n) in *files* —
 # cloning an 86k-file node_modules just to rm -rf it costs ~26s of pure waste.
-time (
-  shopt -s dotglob
-  for e in "$REPO"/*; do
-    case "\$(basename "\$e")" in
+# clone_dir src dst depth: per-entry clone, skipping junk. A directory that
+# holds a node_modules within 2 levels is recursed into (depth-limited) so the
+# nested node_modules can be symlinked back to the source instead of cloned —
+# mcp/node_modules alone is ~41k files, ~13s of clonefile per spawn for bytes
+# nobody needed copied. Covers mcp/ today and packages/xxx/ if it ever exists.
+clone_dir() {
+  local src="\$1" dst="\$2" depth="\$3" e b
+  mkdir -p "\$dst"
+  for e in "\$src"/*; do
+    b="\$(basename "\$e")"
+    case "\$b" in
       node_modules|build|.react-router|coverage) continue ;;
     esac
-    cp -Rc "\$e" "$WORK/" || { echo "clonefile failed for \$(basename "\$e"), plain copy"; cp -R "\$e" "$WORK/"; }
+    if [ -d "\$e" ] && [ "\$depth" -lt 2 ] && [ -n "\$(find "\$e" -mindepth 1 -maxdepth 2 -type d -name node_modules -print -quit 2>/dev/null)" ]; then
+      clone_dir "\$e" "\$dst/\$b" "\$((depth + 1))"
+    else
+      cp -Rc "\$e" "\$dst/" || { echo "clonefile failed for \$b, plain copy"; cp -R "\$e" "\$dst/"; }
+    fi
   done
+  [ -d "\$src/node_modules" ] && [ ! -e "\$dst/node_modules" ] && ln -s "\$src/node_modules" "\$dst/node_modules"
+  return 0
+}
+time (
+  shopt -s dotglob
+  clone_dir "$REPO" "$WORK" 0
 )
 rm -rf "$WORK/.claude/worktrees"
-ln -s "$REPO/node_modules" "$WORK/node_modules"
 cd "$WORK"
 # Give the window a colour of its own. The login shell that launched this
 # script already ran any cd-hook colouring — back when the cwd was still
