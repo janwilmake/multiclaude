@@ -30,7 +30,7 @@ A="$HOME/.claude/agents"; mkdir -p "$A"
 # Each extra slot costs one folder-trust prompt, once, the first time an agent
 # lands in it — so raising this is cheap, but 8 windows is already a lot to
 # watch.
-SLOTS="${CCA_SLOTS:-12}"
+SLOTS="${CCA_SLOTS:-10}"
 # --non-interactive only. Seconds a finished agent leaves its window open
 # before closing it, and seconds of silence after the agent stops talking
 # before its session ends.
