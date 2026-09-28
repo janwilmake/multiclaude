@@ -16,11 +16,23 @@ One command per agent. Each agent gets:
 
 - **Its own full copy of the repo**, made with APFS copy-on-write (`cp -Rc`). Near-instant and near-zero disk, because unchanged files share blocks with the original.
 - **`node_modules` symlinked back to the original repo**, so there's no reinstall — the single most expensive part of a worktree. It's skipped during the copy rather than copied and deleted afterwards: `clonefile` is O(1) in bytes but O(n) in *files*, so cloning an 86k-file `node_modules` and unlinking it again burns ~26s per agent even though almost no data moves.
-- **Its own Terminal window running interactive `claude --chrome`**, so it gets its own browser session and you can watch, interrupt, and steer it like a normal Claude Code session.
+- **Its own `screen` session running interactive `claude --chrome`**, with a Terminal window that shows it, so it gets its own browser session and you can watch, interrupt, and steer it like a normal Claude Code session. See [Windows and focus](#windows-and-focus).
 - **A fixed slot name** (`agent-1` … `agent-8`), set as the window title so you can tell the windows apart, with a lock file so a new `cca` invocation never lands on a slot that's already busy. The slot is claimed before the window opens, so you can fire all eight spawns at once and each still gets its own directory.
 - **Its own background colour**, if you have [termcolor](https://github.com/janwilmake/termcolor) installed. The hue comes from the slot number, evenly spaced around the wheel, so eight windows are eight visibly different colours — and slot 3 is the same colour every time you use it. No termcolor, no colour, and nothing else changes.
 
 Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt, optional flags for `claude`, and no name.
+
+## Windows and focus
+
+The agent runs in a detached `screen` session named after its slot (`agent-3`), not in the Terminal window. The window only views it with `screen -r agent-3`.
+
+This keeps your typing out of the agents. Terminal starts a `.command` by typing its path into the new window's shell, and that window takes the keyboard. A key you press at that moment lands in front of the path. When the window was the agent, the agent never started. Now a stray key only breaks the view: run `screen -r agent-3` in any window to get it back.
+
+The window also opens without taking your keyboard. When another app is in front, Terminal opens it in the background. When Terminal is in front, `cca` gives the front window back to you as soon as the new one exists.
+
+- `screen -ls` lists the running agents; `screen -r agent-N` opens one; Ctrl-a d leaves it running.
+- The window closes when its session ends.
+- `CCA_WINDOW=1 cca "..."` runs the agent in the Terminal window itself, as before.
 
 ## When an agent finishes: `--non-interactive`
 
@@ -123,7 +135,7 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 
 ## Requirements
 
-- **macOS.** It uses `open -a Terminal` to spawn windows, and `cp -Rc` (APFS clonefile) for the fast copy. On a non-APFS volume the script falls back to a plain `cp -R`, which works but is slow.
+- **macOS.** It uses the `screen` that ships with macOS for the agent, `open -g -a Terminal` for its window, and `cp -Rc` (APFS clonefile) for the fast copy. On a non-APFS volume the script falls back to a plain `cp -R`, which works but is slow.
 - **Claude Code** on your `PATH`, with the `--chrome` flag available (Claude in Chrome extension set up).
 
 ## Caveats
@@ -134,7 +146,7 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 - `.env` files are copied along with everything else, since it's a raw directory copy. Agents get your local credentials; keep that in mind before pointing one at production.
 - **Claude Code's Bash sandbox denies writes under `~/.claude/`**, so a sandboxed `cca` call can't claim a slot. Run it with the sandbox disabled (the bundled skill tells Claude to do this). `cca` fails immediately with the underlying error rather than retrying, so it's obvious when this is what happened.
 - Slots cap at 8. When all eight are busy `cca` exits with `all 8 slots busy` rather than spilling into a ninth directory. `CCA_SLOTS=12 cca "..."` raises the cap; each new slot costs one folder-trust prompt, once, the first time an agent lands in it.
-- The lock is released when the agent's Terminal window closes (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
+- The lock is released when the agent's session ends (normal exit or `SIGHUP`). A `SIGKILL`'d window leaves `~/.claude/agents/agent-N.lock` behind, but it holds the window's pid, so the next `cca` sees the process is gone and reclaims the slot — no manual cleanup.
 - **A freed slot gets deleted.** The next agent to take it wipes the directory and clones the repo again. A `--non-interactive` window closes itself even when the copy holds uncommitted changes, unpushed commits, or a scratch file the agent wrote outside git — so tell an unattended agent to push, or press a key during its countdown to keep the window.
 
 ## License
