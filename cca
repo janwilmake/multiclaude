@@ -91,6 +91,23 @@ done
 WORK="$A/$NAME"
 LOCK="$A/$NAME.lock"
 
+# Test workers for this agent. A test runner starts one worker per core by
+# default, so four agents testing at once asked for 40 workers on 10 cores and
+# held the load near 20. Share the cores instead: (cores - 2) over the agents
+# running now, this one included, between 1 and 4. Two cores stay for the
+# user. The agent's scripts read TEST_WORKERS; CCA_TEST_WORKERS overrides it.
+LIVE=1
+for n in $(seq 1 "$SLOTS"); do
+  [ "agent-$n" = "$NAME" ] && continue
+  pid="$(cat "$A/agent-$n.lock" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && LIVE=$(( LIVE + 1 ))
+done
+CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
+WORKERS=$(( (CORES - 2) / LIVE ))
+[ "$WORKERS" -lt 1 ] && WORKERS=1
+[ "$WORKERS" -gt 4 ] && WORKERS=4
+WORKERS="${CCA_TEST_WORKERS:-$WORKERS}"
+
 printf '%s' "$PROMPT" > "$L/$NAME.prompt"
 
 # The hook goes on the command line rather than in the copy's settings file,
@@ -146,6 +163,7 @@ time (
 )
 rm -rf "$WORK/.claude/worktrees"
 cd "$WORK"
+export TEST_WORKERS=$WORKERS
 # Give the window a colour of its own. The login shell that launched this
 # script already ran any cd-hook colouring — back when the cwd was still
 # \$HOME — so without this every agent window is the same colour as every

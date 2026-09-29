@@ -22,6 +22,14 @@ One command per agent. Each agent gets:
 
 Slot names are **not** configurable, and that's deliberate. Claude Code asks "do you trust the files in this folder?" once per directory and remembers the answer. Spawning into a fresh path would mean answering that prompt again on every single spawn. Reusing the same eight directories forever means you approve each one once, ever — so `cca` takes a prompt, optional flags for `claude`, and no name.
 
+## Test workers
+
+Each agent gets `TEST_WORKERS` in its environment: the cores minus two, shared by
+the agents running when it starts, between 1 and 4. A repo's test scripts can read
+it to cap their workers (Jest `maxWorkers`, `node --test --test-concurrency`), so
+several agents testing at once do not ask for a worker per core each. Set
+`CCA_TEST_WORKERS` to force a number.
+
 ## Windows and focus
 
 The agent runs in a detached `screen` session named after its slot (`agent-3`), not in the Terminal window. The window only views it with `screen -r agent-3`.
