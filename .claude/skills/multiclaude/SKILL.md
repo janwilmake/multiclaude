@@ -121,7 +121,7 @@ Or have each agent push a branch, and merge from there.
 
 ## Constraints to respect
 
-- **macOS only.** It uses `open -a Terminal` and `cp -Rc` (APFS clonefile). If the user is not on macOS, fall back to normal subagents or worktrees and say so.
+- **macOS or Linux.** On macOS it uses `open -a Terminal` and `cp -Rc` (APFS clonefile). On Linux each agent runs in a `screen` session with no window (`screen -r agent-N` to watch), and without `--chrome` unless a Chrome is installed, so a Linux agent has no Claude in Chrome tools.
 - **`node_modules` is a symlink to the source repo.** An agent running `npm install` mutates the user's main checkout. Don't instruct an agent to install or upgrade dependencies unless that's the actual task.
 - **The copy is a plain directory, not a worktree.** Each agent has its own `.git`; merging back is manual.
 - **`.env` files are copied.** Agents inherit real local credentials — never point one at production data or a destructive flow without the user explicitly approving it.

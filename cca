@@ -37,8 +37,25 @@ SLOTS="${CCA_SLOTS:-10}"
 CLOSE_DELAY="${CCA_CLOSE_DELAY:-15}"
 GRACE="${CCA_GRACE:-120}"
 
+# Linux has no Terminal.app, no AppleScript and no APFS clonefile. There the
+# agent runs in its screen session with no viewer window, and the copy uses a
+# reflink where the filesystem has one.
+if [ "$(uname -s)" = Darwin ]; then
+  MAC=1; MTIME="stat -f %m"; CLONE="cp -Rc"
+else
+  MAC=0; MTIME="stat -c %Y"; CLONE="cp -a --reflink=auto"
+fi
+# --chrome needs a Chrome with the Claude extension, which a headless server lacks.
+CHROME=" --chrome"
+if [ "$MAC" = 0 ]; then
+  CHROME=""
+  for c in google-chrome chromium chromium-browser; do
+    command -v "$c" >/dev/null 2>&1 && CHROME=" --chrome" && break
+  done
+fi
+
 MUTEX="$A/.cca-claim"
-age() { echo $(( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || date +%s) )); }
+age() { echo $(( $(date +%s) - $($MTIME "$1" 2>/dev/null || date +%s) )); }
 
 # Slot selection has to be a critical section. It used to happen in two places
 # at once — this script picked the first slot with no lock, but the lock itself
@@ -151,7 +168,7 @@ clone_dir() {
     if [ -d "\$e" ] && [ "\$depth" -lt 2 ] && [ -n "\$(find "\$e" -mindepth 1 -maxdepth 2 -type d -name node_modules -print -quit 2>/dev/null)" ]; then
       clone_dir "\$e" "\$dst/\$b" "\$((depth + 1))"
     else
-      cp -Rc "\$e" "\$dst/" || { echo "clonefile failed for \$b, plain copy"; cp -R "\$e" "\$dst/"; }
+      $CLONE "\$e" "\$dst/" || { echo "clonefile failed for \$b, plain copy"; cp -R "\$e" "\$dst/"; }
     fi
   done
   [ -d "\$src/node_modules" ] && [ ! -e "\$dst/node_modules" ] && ln -s "\$src/node_modules" "\$dst/node_modules"
@@ -191,9 +208,9 @@ SELF=\$\$
   # ended.
   while kill -0 \$SELF 2>/dev/null; do
     if [ -e "$MARK" ]; then
-      t="\$(stat -f %m "$MARK")"
+      t="\$($MTIME "$MARK")"
       sleep $GRACE
-      [ "\$t" = "\$(stat -f %m "$MARK" 2>/dev/null || echo moved)" ] || continue
+      [ "\$t" = "\$($MTIME "$MARK" 2>/dev/null || echo moved)" ] || continue
       cpid="\$(pgrep -P \$SELF -x claude | head -1)"
       [ -n "\$cpid" ] || exit 0
       kill "\$cpid"
@@ -210,7 +227,7 @@ EOF
 fi
 
 cat >> "$L/$NAME.command" <<EOF
-claude --chrome$HOOK$FLAGS "\$(cat "$L/$NAME.prompt")"
+claude$CHROME$HOOK$FLAGS "\$(cat "$L/$NAME.prompt")"
 EOF
 
 if [ "$NONINTERACTIVE" = 1 ]; then
@@ -231,7 +248,7 @@ if ! read -r -t $CLOSE_DELAY -n 1; then
   # leaves the tty session and fires once this script and its login shell
   # are gone. If python3 is missing the window just stays — the slot is
   # freed either way, by the EXIT trap below.
-  /usr/bin/python3 - "\$(tty)" 2>/dev/null <<'PY'
+  [ $MAC = 1 ] && /usr/bin/python3 - "\$(tty)" 2>/dev/null <<'PY'
 import os, subprocess, sys, time
 if os.fork() == 0:
     os.setsid()
@@ -275,6 +292,11 @@ env -i HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" \
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" TERM=xterm-256color \
   /usr/bin/screen -T screen-256color -dmS "$NAME" \
   "${SHELL:-/bin/zsh}" -lic "exec /bin/bash $(printf '%q' "$L/$NAME.command")"
+
+if [ "$MAC" = 0 ]; then
+  echo "watch it: screen -r $NAME"
+  exit 0
+fi
 
 cat > "$L/$NAME.view.command" <<EOF
 #!/bin/bash

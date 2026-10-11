@@ -143,8 +143,9 @@ ln -s "$PWD/multiclaude/.claude/skills/multiclaude" ~/.claude/skills/multiclaude
 
 ## Requirements
 
-- **macOS.** It uses the `screen` that ships with macOS for the agent, `open -g -a Terminal` for its window, and `cp -Rc` (APFS clonefile) for the fast copy. On a non-APFS volume the script falls back to a plain `cp -R`, which works but is slow.
-- **Claude Code** on your `PATH`, with the `--chrome` flag available (Claude in Chrome extension set up).
+- **macOS or Linux.** On macOS it uses the `screen` that ships with macOS for the agent, `open -g -a Terminal` for its window, and `cp -Rc` (APFS clonefile) for the fast copy. On a non-APFS volume the script falls back to a plain `cp -R`, which works but is slow.
+- **On Linux** (tested on Ubuntu) install `screen`. The agent runs in its `screen` session with no window: `screen -r agent-N` watches it. The copy is `cp -a --reflink=auto`, which is instant on Btrfs or XFS and a plain copy on ext4.
+- **Claude Code** on your `PATH`. On macOS the `--chrome` flag must work (Claude in Chrome extension set up). On Linux, `cca` passes `--chrome` only when a Chrome is installed.
 
 ## Caveats
 
