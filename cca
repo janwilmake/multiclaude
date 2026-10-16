@@ -14,9 +14,14 @@ PROMPT="$1"; shift
 # has finished.
 NONINTERACTIVE=0
 FLAGS=""
+SID=""
+prev=""
 for f in "$@"; do
   if [ "$f" = --non-interactive ]; then NONINTERACTIVE=1; continue; fi
   FLAGS="$FLAGS $(printf '%q' "$f")"
+  [ "$prev" = --session-id ] && SID="$f"
+  case "$f" in --session-id=*) SID="${f#*=}" ;; esac
+  prev="$f"
 done
 case "$NONINTERACTIVE$FLAGS" in
   1*--dangerously-skip-permissions*) ;;
@@ -36,6 +41,9 @@ SLOTS="${CCA_SLOTS:-10}"
 # before its session ends.
 CLOSE_DELAY="${CCA_CLOSE_DELAY:-15}"
 GRACE="${CCA_GRACE:-120}"
+# --non-interactive only. Seconds after the agent stops talking that its
+# background work may keep the session alive, so a hung job frees the slot.
+MAX_BUSY="${CCA_MAX_BUSY:-7200}"
 
 # Linux has no Terminal.app, no AppleScript and no APFS clonefile. There the
 # agent runs in its screen session with no viewer window, and the copy uses a
@@ -199,23 +207,56 @@ EOF
 if [ "$NONINTERACTIVE" = 1 ]; then
 cat >> "$L/$NAME.command" <<EOF
 
-rm -f "$MARK"
+rm -f "$MARK" "$MARK.ended"
 SELF=\$\$
+# busy PID: prints why the claude process PID is not done yet, or nothing.
+# A Bash-tool command, run_in_background or Monitor, runs in a shell that
+# claude starts in a process group of its own; MCP servers stay in claude's
+# group, so they never count. A background subagent runs inside claude and
+# leaves no process; claude writes how many are still running into the
+# transcript at the end of each turn, so that is read when --session-id says
+# which transcript is this session's.
+busy() {
+  ps -A -o pid= -o ppid= -o pgid= -o comm= | awk -v c="\$1" '\$2 == c && \$1 == \$3 && \$4 ~ /(^|\/)-?(ba|z|da|k)?sh\$/ { print "shell job, process group " \$3 }'
+  t="\$(ls -t "$HOME"/.claude/projects/*/"$SID".jsonl 2>/dev/null | head -1)"
+  [ -n "\$t" ] && grep '"subtype":"turn_duration"' "\$t" | tail -1 |
+    grep -o '"pendingBackgroundAgentCount":[1-9][0-9]*' | sed 's/.*:/background agents: /'
+  return 0
+}
 (
-  # The Stop hook touches the marker every time the agent stops talking. Wait
-  # out a grace period before acting on it: if someone replies, the agent
-  # talks again and the marker moves, so only a session nobody picked up gets
-  # ended.
+  # The Stop hook touches the marker every time the agent stops talking, also
+  # when it stops to wait for its own background work. End the session only
+  # once the marker has stayed still and nothing ran in the background for
+  # $GRACE seconds: if someone replies, or a background job finishes and the
+  # agent reads its result, the agent talks again and the marker moves.
   while kill -0 \$SELF 2>/dev/null; do
     if [ -e "$MARK" ]; then
-      t="\$($MTIME "$MARK")"
-      sleep $GRACE
-      [ "\$t" = "\$($MTIME "$MARK" 2>/dev/null || echo moved)" ] || continue
-      cpid="\$(pgrep -P \$SELF -x claude | head -1)"
-      [ -n "\$cpid" ] || exit 0
+      t0="\$($MTIME "$MARK")"
+      quiet="\$(date +%s)"
+      while :; do
+        sleep 5
+        [ "\$t0" = "\$($MTIME "$MARK" 2>/dev/null || echo moved)" ] || continue 2
+        cpid="\$(pgrep -P \$SELF -x claude | head -1)"
+        [ -n "\$cpid" ] || exit 0
+        now="\$(date +%s)"
+        why="\$(busy "\$cpid")"
+        if [ -n "\$why" ]; then
+          # The work may have run until the next check, 5s from now.
+          quiet=\$(( now + 5 ))
+          [ \$(( now - t0 )) -ge $MAX_BUSY ] || continue
+          msg="$NAME still had background work ${MAX_BUSY}s after it stopped talking (CCA_MAX_BUSY) — session ended. Still running: \$(echo \$why)"
+          break
+        fi
+        [ \$(( now - quiet )) -ge $GRACE ] || continue
+        msg="$NAME finished and nobody replied for ${GRACE}s — session ended."
+        break
+      done
+      # The launcher prints the reason once claude has left the screen, and
+      # kills this loop as soon as claude exits.
+      echo "\$msg" > "$MARK.ended"
+      groups="\$(busy "\$cpid" | sed -n 's/^shell job, process group //p')"
       kill "\$cpid"
-      sleep 1
-      echo "$NAME finished and nobody replied for ${GRACE}s — session ended."
+      for g in \$groups; do kill -- -"\$g" 2>/dev/null; done
       exit 0
     fi
     sleep 5
@@ -233,6 +274,8 @@ EOF
 if [ "$NONINTERACTIVE" = 1 ]; then
 cat >> "$L/$NAME.command" <<EOF
 kill "\$watchdog" 2>/dev/null
+cat "$MARK.ended" 2>/dev/null
+rm -f "$MARK.ended"
 
 # The window closes when the agent finishes, whether or not the copy still
 # holds work. It used to keep the slot over uncommitted changes or unpushed
