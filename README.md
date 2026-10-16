@@ -54,7 +54,17 @@ cca "audit the API routes for missing auth checks" --non-interactive --dangerous
 
 `--non-interactive` belongs to `cca` and never reaches `claude`. It says nobody is going to read this window, which is the one thing `cca` cannot work out for itself. Two things follow.
 
-**The session ends when the agent stops talking.** A `Stop` hook marks each time it does, and a watchdog ends the session if nobody replies within two minutes. Reply and the agent talks again, the marker moves, and the clock restarts — only a session nobody picked up gets ended. `CCA_GRACE` sets the wait. The hook is passed on the command line, so it belongs to that one session: it is never written into the copy's settings and cannot follow the work into a commit.
+**The session ends when the agent stops talking.** A `Stop` hook marks each time it does, and a watchdog ends the session if nobody replies within two minutes. Reply and the agent talks again, the marker moves, and the clock restarts — only a session nobody picked up gets ended. `CCA_GRACE` sets the wait.
+
+An agent that starts work in the background and ends its turn to wait for it stops talking too, so the watchdog first checks for background work, and the clock only runs while there is none:
+
+- **Shell jobs.** A Bash command with `run_in_background`, or a Monitor, runs in a shell that `claude` starts in a process group of its own. While one is alive, the session stays. MCP servers are children of `claude` too, but they stay in its process group, so they never count.
+- **Background subagents** (an `Agent` call with `run_in_background`, or a skill that forks, such as `/review`) run inside the `claude` process and leave no process behind. At the end of each turn Claude Code writes how many are still running into the session transcript (`pendingBackgroundAgentCount` on the `turn_duration` line), and the watchdog reads it — but only when you pass `--session-id`, because that is how it finds the transcript. Without `--session-id`, a session that waits only for background subagents ends after `CCA_GRACE`, as before. The field is not a documented interface; if a Claude Code release drops it, the same thing happens.
+- **A hard cap.** `CCA_MAX_BUSY` (default 7200, two hours) ends the session anyway once the agent has been silent that long, so a hung job cannot hold a slot forever. The window says so and names what was still running, and the watchdog kills the shell jobs with the session. A persistent Monitor counts as a job, so it holds the session until this cap.
+
+A process the agent detached from its shell (`nohup … &`, a dev server started with `&` in a foreground command) leaves the process tree, so it does not count and it outlives the session.
+
+The hook is passed on the command line, so it belongs to that one session: it is never written into the copy's settings and cannot follow the work into a commit.
 
 **The window closes when the agent finishes.** Claude exits, the window says it is done, waits 15 seconds, and closes itself. The slot is free. Press any key during the countdown to keep the window — it drops into your shell inside the agent's copy, so you can inspect the diff, run tests, or commit from there. `CCA_CLOSE_DELAY` sets the wait.
 
