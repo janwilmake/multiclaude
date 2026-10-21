@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[ $# -ge 1 ] || { echo 'usage: cca "prompt" [--non-interactive] [claude flags...]'; exit 1; }
+[ $# -ge 1 ] || { echo 'usage: cca "prompt" [--non-interactive] [--allowlist settings.json] [claude flags...]'; exit 1; }
 
 PROMPT="$1"; shift
 # Everything after the prompt is passed to `claude` verbatim — e.g.
@@ -12,20 +12,41 @@ PROMPT="$1"; shift
 # is going to read this window, which is the one thing cca cannot work out for
 # itself: an agent with a genuine question looks exactly like an agent that
 # has finished.
+#
+# --allowlist <settings.json> is cca's own flag too: an unattended run that gets
+# a fixed set of tools instead of every tool. The file is a Claude Code settings
+# file with `permissions.allow` and `permissions.deny`. The agent runs in
+# `dontAsk` mode, so a call no rule allows is refused at once rather than asked,
+# and the agent never stops at a prompt. It is a flag of cca's and not a plain
+# --settings because the --non-interactive Stop hook is a --settings of its own,
+# and claude reads only one: cca merges the two into one file.
 NONINTERACTIVE=0
+ALLOWLIST=""
 FLAGS=""
 SID=""
 prev=""
 for f in "$@"; do
+  if [ "$prev" = --allowlist ]; then ALLOWLIST="$f"; prev=""; continue; fi
   if [ "$f" = --non-interactive ]; then NONINTERACTIVE=1; continue; fi
+  if [ "$f" = --allowlist ]; then prev="$f"; continue; fi
   FLAGS="$FLAGS $(printf '%q' "$f")"
   [ "$prev" = --session-id ] && SID="$f"
   case "$f" in --session-id=*) SID="${f#*=}" ;; esac
   prev="$f"
 done
+[ "$prev" = --allowlist ] && { echo "cca: --allowlist needs a settings file" >&2; exit 1; }
+if [ -n "$ALLOWLIST" ]; then
+  # Read now, while $PWD is still the caller's: the launcher runs elsewhere.
+  ALLOWLIST_JSON="$(jq -c . "$ALLOWLIST" 2>/dev/null)" \
+    || { echo "cca: --allowlist $ALLOWLIST is not a readable JSON file" >&2; exit 1; }
+  case "$FLAGS" in
+    *--dangerously-skip-permissions*|*--settings*|*--permission-mode*)
+      echo "cca: --allowlist cannot go with --dangerously-skip-permissions, --settings or --permission-mode — it sets the permissions itself" >&2; exit 1 ;;
+  esac
+fi
 case "$NONINTERACTIVE$FLAGS" in
   1*--dangerously-skip-permissions*) ;;
-  1*) echo "cca: --non-interactive without --dangerously-skip-permissions — an agent stopped at a permission prompt is not a finished agent, and nobody is there to answer it" >&2 ;;
+  1*) [ -n "$ALLOWLIST" ] || echo "cca: --non-interactive without --dangerously-skip-permissions or --allowlist — an agent stopped at a permission prompt is not a finished agent, and nobody is there to answer it" >&2 ;;
 esac
 
 REPO="$PWD"
@@ -141,8 +162,22 @@ printf '%s' "$PROMPT" > "$L/$NAME.prompt"
 # writes under ~/.claude/ — a marker there is silently never written.
 MARK="/tmp/cca-$(id -u)-$NAME.stop"
 HOOK=""
+STOP_HOOK="{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $MARK\"}]}]}}"
 if [ "$NONINTERACTIVE" = 1 ]; then
-  HOOK=" --settings $(printf '%q' "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch $MARK\"}]}]}}")"
+  HOOK=" --settings $(printf '%q' "$STOP_HOOK")"
+fi
+if [ -n "$ALLOWLIST" ]; then
+  # One settings file for the session: the allowlist, plus the Stop hook when
+  # there is one. It sits beside the launcher, outside the copy, so it never
+  # follows the work into a commit.
+  SETTINGS="$L/$NAME.settings.json"
+  if [ "$NONINTERACTIVE" = 1 ]; then
+    jq -n --argjson a "$ALLOWLIST_JSON" --argjson h "$STOP_HOOK" \
+      '$a | .hooks.Stop = ((.hooks.Stop // []) + $h.hooks.Stop)' > "$SETTINGS"
+  else
+    printf '%s' "$ALLOWLIST_JSON" > "$SETTINGS"
+  fi
+  HOOK=" --settings $(printf '%q' "$SETTINGS") --permission-mode dontAsk"
 fi
 
 cat > "$L/$NAME.command" <<EOF

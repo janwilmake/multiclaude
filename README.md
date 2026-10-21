@@ -72,9 +72,26 @@ It closes whether or not the copy still holds work. Earlier versions kept the sl
 
 The practical consequence: **tell an unattended agent to push a branch.** The next agent to take the slot deletes the directory, so anything left behind and unpushed is gone.
 
-Pair the flag with `--dangerously-skip-permissions`. Without it the agent can still stop at a permission prompt, and a stopped agent is not a finished one — the `Stop` hook never fires and the watchdog waits forever. `cca` prints a warning if you pass one without the other.
+Pair the flag with `--dangerously-skip-permissions` or `--allowlist`. Without one of them the agent can still stop at a permission prompt, and a stopped agent is not a finished one — the `Stop` hook never fires and the watchdog waits forever. `cca` prints a warning if you pass `--non-interactive` with neither.
 
 Without `--non-interactive`, nothing changes: the window stays, holds its slot, and waits for you.
+
+## A fixed set of tools: `--allowlist`
+
+`--dangerously-skip-permissions` gives an unattended agent every tool. `--allowlist` gives it the tools you name and no others:
+
+```bash
+cat > /tmp/audit.json <<'JSON'
+{"permissions": {"allow": ["Read", "Grep", "Glob", "Bash(git log:*)"], "deny": ["Bash(git push:*)"]}}
+JSON
+cca "audit the API routes for missing auth checks" --non-interactive --allowlist /tmp/audit.json
+```
+
+The file is a Claude Code settings file; its rules use [Claude Code permission rule syntax](https://code.claude.com/docs/en/iam). The agent runs in `dontAsk` mode: a tool call that no allow rule covers is refused at once, and the agent sees the refusal and carries on. Nothing waits for an answer, so it is safe with `--non-interactive`. Deny rules win over allow rules.
+
+`--allowlist` belongs to `cca`, like `--non-interactive`. It is not a plain `--settings` because the Stop hook of `--non-interactive` is a `--settings` of its own and `claude` reads only one. `cca` merges the two into `~/.claude/launchers/agent-N.settings.json` and passes that. `cca` refuses `--allowlist` together with `--dangerously-skip-permissions`, `--settings` or `--permission-mode`.
+
+The rules add to the rules of your own settings and of the repo's `.claude/settings.json`. An allow rule there is an allow rule for the agent too, so keep those files free of wide allow rules on a machine that runs agents this way.
 
 A window that closes itself needs no permission dialog. Terminal refuses to close a window that still has processes on its tty — it asks "terminate running processes?" instead — so the close is handed to a small helper that leaves the tty session and fires once the window's shell is gone.
 
@@ -98,7 +115,7 @@ cca "audit the API routes for missing auth checks"
 
 Three Terminal windows, three isolated copies, three independent Chrome sessions.
 
-Anything after the prompt is passed straight to `claude` — except `--non-interactive`, which `cca` keeps for itself — so you can tune autonomy and model per agent:
+Anything after the prompt is passed straight to `claude` — except `--non-interactive` and `--allowlist`, which `cca` keeps for itself — so you can tune autonomy and model per agent:
 
 ```bash
 cca "run the e2e suite and fix what breaks" --dangerously-skip-permissions
